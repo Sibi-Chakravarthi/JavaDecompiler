@@ -7,7 +7,9 @@ authors = [
     { name = "Sibi Chakravarthi", email = "sibichakravarthima31@gmail.com" }
 ]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "typing>=3.10.0.0",
+]
 
 [project.scripts]
 javadecompiler = "javadecompiler:main"
