@@ -1,6 +1,6 @@
 from typing import List, Tuple, Dict
 
-jvmopcodes: Dict[int, Tuple[str, int]] = {
+jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0x10: ("bipush", 1),       # Push byte
     0x12: ("ldc", 1),          # Load constant
     0x15: ("iload", 1),        # Load int from local variable
@@ -33,7 +33,7 @@ def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str,any]
         opcode: int = rawBytecode[currentOffset]
         currentOffset += 1
 
-        if opcode not in jvpOpcodes:
+        if opcode not in jvmOpcodes:
             instructions.append({
                 "offset": instructionOffset,
                 "mnemonic": f"unknown_0x{opcode:02x}",
@@ -41,7 +41,7 @@ def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str,any]
             })
             continue
 
-        mnemonic, operandCount = jvmopcodes[opcode]
+        mnemonic, operandCount = jvmOpcodes[opcode]
         operands: List[int] = []
 
         if operandCount > 0:

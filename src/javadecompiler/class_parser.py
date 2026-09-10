@@ -2,6 +2,7 @@ import struct
 import zipfile
 import os
 from typing import Dict, Any
+from disassembler import disassembleMethod
 
 class ClassFileReader:
     def __init__(self, filePath : str) -> None:
