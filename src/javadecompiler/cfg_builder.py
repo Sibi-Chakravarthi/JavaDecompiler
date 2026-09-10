@@ -18,3 +18,20 @@ branchMnemonics: Set[str] = conditionalJumpMnemonics | unconditionalJumpMnemonic
 terminatorMnemonics: Set[str] = branchMnemonics | returnMnemonics | throwMnemonics | switchMnemonics
  
 
+def resolveBranchTarget(instruction: Dict[str, Any]) -> Optional[int]:
+    mnemonic: str = instruction["mnemonic"]
+    if mnemonic not in conditionalJumpMnemonics and mnemonic not in unconditionalJumpMnemonics:
+        return None
+ 
+    operands: List[int] = instruction["operands"]
+    if len(operands) != 2:
+        return None
+ 
+    highByte, lowByte = operands
+    rawOffset: int = (highByte << 8) | lowByte
+    if rawOffset >= 0x8000:
+        rawOffset -= 0x10000
+ 
+    return instruction["offset"] + rawOffset
+ 
+ 
