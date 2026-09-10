@@ -22,3 +22,37 @@ jvmopcodes: Dict[int, Tuple[str, int]] = {
     0xb6: ("invokevirtual", 2),# Invoke instance method
     0xb8: ("invokestatic", 2), # Invoke a class (static) method
 }
+
+def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str,any]]:
+    instructions: List[Dict[str, any]] = []
+    currentOffset: int = 0
+    codeLength: int = len(rawBytecode)
+
+    while currentOffset < codeLength:
+        instructionOffset: int = currentOffset
+        opcode: int = rawBytecode[currentOffset]
+        currentOffset += 1
+
+        if opcode not in jvpOpcodes:
+            instructions.append({
+                "offset": instructionOffset,
+                "mnemonic": f"unknown_0x{opcode:02x}",
+                "operands": []
+            })
+            continue
+
+        mnemonic, operandCount = jvmopcodes[opcode]
+        operands: List[int] = []
+
+        if operandCount > 0:
+            for _ in range(operandCount):
+                if currentOffset < codeLength:
+                    operands.append(rawBytecode[currentOffset])
+                    currentOffset += 1
+        instructions.append({
+            "offset": instructionOffset,
+            "mnemonic": mnemonic,
+            "operands": operands
+        })
+
+    return instructions
