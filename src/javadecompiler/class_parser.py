@@ -5,7 +5,6 @@ from typing import Dict, Any
 
 class ClassFileReader:
     def __init__(self, filePath : str) -> None:
-
         if not os.path.isfile(filePath):
             raise FileNotFoundError(f"File not found: {filePath}")
         try:
@@ -17,7 +16,6 @@ class ClassFileReader:
         self.currentCursor: int = 0
         self.fileLength: int = len(self.fileData)
 
-
     def readUnsignedByte(self) -> int:
         if self.currentCursor >= self.fileLength:
             raise EOFError("Reached end of file while trying to read an unsigned byte.")
@@ -28,7 +26,7 @@ class ClassFileReader:
 
     def readUnsignedShort(self) -> int:
         try:
-            val = struct.unpack('>H', self.fileData, self.currentCursor)[0]
+            val = struct.unpack_from('>H', self.fileData, self.currentCursor)[0]
             self.currentCursor += 2
             return val
         except struct.error as e:
@@ -36,7 +34,7 @@ class ClassFileReader:
 
     def readUnsignedInt(self) -> int:
         try:
-            val = struct.unpack('>I', self.fileData, self.currentCursor)[0]
+            val = struct.unpack_from('>I', self.fileData, self.currentCursor)[0]
             self.currentCursor += 4
             return val
         except struct.error as e:
@@ -45,7 +43,6 @@ class ClassFileReader:
     def readBytes(self, byteLength : int) -> bytes:
         if self.currentCursor + byteLength > self.fileLength:
             raise EOFError("Reached end of file while trying to read bytes.")
-
         val: bytes = self.fileData[self.currentCursor:self.currentCursor + byteLength]
         self.currentCursor += byteLength
         return val
@@ -53,7 +50,6 @@ class ClassFileReader:
     def readRawBytes(self, byteLength: int) -> bytes:
         if self.currentCursor + byteLength > self.fileLength:
             raise EOFError("Reached end of file while trying to read raw bytes.")
-
         val: bytes = self.fileData[self.currentCursor:self.currentCursor + byteLength]
         self.currentCursor += byteLength
         return val
@@ -180,17 +176,13 @@ def extractAndParseJar(jarFilePath: str, targetClassFile: str) -> Dict[int, Dict
         classReader: ClassFileReader = ClassFileReader(extractedFilePath)
         poolCount: int = parseClassHeader(classReader)
         constantPoolDict: Dict[int, Dict[str, Any]] = parseConstantPool(classReader, poolCount)
-
+        
         skipClassMetadataAndInterfaces(classReader)
         skipFields(classReader)
-
-        methodBytecodes: Dict[str, bytes] = extractMethodBytecode(classReader, constantPoolDict)
-
-        print(f"\n[+] Extracted Bytecode for {len(methodBytecodes)} methods:")
-        for mName, mBytes in methodBytecodes.items():
-            print(f"    ├─ {mName}: {len(mBytes)} bytes of instructions")
-
-        return constantPoolDict
+        
+        extractedBytecodes = extractMethodBytecode(classReader, constantPoolDict)
+        return extractedBytecodes
+        
     finally:
         if os.path.exists(extractedFilePath):
             os.remove(extractedFilePath)
@@ -246,3 +238,36 @@ def extractMethodBytecode(classReader: ClassFileReader, constantPool: Dict[int, 
                 extractedMethods[methodName] = rawInstructions
 
     return extractedMethods
+
+def parseClassDirectly(classFilePath: str) -> Dict[str, bytes]:
+    """Parses a standalone .class file directly from disk."""
+    if not os.path.isfile(classFilePath):
+        raise FileNotFoundError(f"Class file not found: {classFilePath}")
+
+    classReader: ClassFileReader = ClassFileReader(classFilePath)
+    poolCount: int = parseClassHeader(classReader)
+    constantPoolDict: Dict[int, Dict[str, Any]] = parseConstantPool(classReader, poolCount)
+    
+    skipClassMetadataAndInterfaces(classReader)
+    skipFields(classReader)
+    
+    extractedBytecodes = extractMethodBytecode(classReader, constantPoolDict)
+    return extractedBytecodes
+
+if __name__ == "__main__":
+    from disassembler import disassembleMethod
+    
+    # 1. Point directly to the compiled class file
+    targetClassPath = "EngineMath.class" 
+    
+    # 2. Call parseClassDirectly, NOT extractAndParseJar
+    methodBytecodes = parseClassDirectly(targetClassPath)
+    
+    # 3. Disassemble and print
+    for mName, mBytes in methodBytecodes.items():
+        print(f"\nDisassembling Method: {mName}")
+        parsedInstructions = disassembleMethod(mName, mBytes)
+        
+        for instr in parsedInstructions:
+            opStr = f"{instr['mnemonic']} " + " ".join([str(op) for op in instr['operands']])
+            print(f"  {instr['offset']:4}: {opStr.strip()}")
