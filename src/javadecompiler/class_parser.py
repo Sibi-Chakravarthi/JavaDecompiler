@@ -126,8 +126,7 @@ def parseConstantPool(classReader: ClassFileReader, poolCount: int) -> Dict[int,
             highBytes: int = classReader.readUnsignedInt()
             lowBytes: int = classReader.readUnsignedInt()
             constantPool[currentIndex] = {"type": "Primitive64", "high": highBytes, "low": lowBytes}
-            
-            # According to JVM specification, Longs and Doubles take up two consecutive slots in the constant pool table
+
             currentIndex += 1 
 
         elif currentTag == tagMethodHandle:
@@ -150,3 +149,30 @@ def parseConstantPool(classReader: ClassFileReader, poolCount: int) -> Dict[int,
         currentIndex += 1
 
     return constantPool
+
+def extractAndParseJar(jarFilePath: str, targetClassFile: str) -> Dict[int, Dict[str, Any]]:
+    if not os.path.isfile(jarFilePath):
+        raise FileNotFoundError(f"JAR file not found: {jarFilePath}")
+
+    extractPath: str = "extractedClasses"
+    os.makedirs(extractPath, exist_ok=True)
+
+    try:
+        with zipfile.ZipFile(jarFilePath, "r") as jarArchive:
+            jarArchive.extract(targetClassFile ,path=extractPath)
+
+    except zipfile.BadZipFile:
+        raise ValueError(f"The file {jarFilePath} is not a valid JAR/ZIP file")
+    except KeyError:
+        raise KeyError(f"The class file {targetClassFile} was not found in the JAR archive {jarFilePath}")
+
+    extractedFilePath: str = os.path.join(extractPath, targetClassFile)
+
+    try:
+        classReader: ClassFileReader = ClassFileReader(extractedFilePath)
+        poolCount: int = parseClassHeader(classReader)
+        constantPoolDict: Dict[int, Dict[str, Any]] = parseConstantPool(classReader, poolCount)
+        return constantPoolDict
+    finally:
+        if os.path.exists(extractedFilePath):
+            os.remove(extractedFilePath)
