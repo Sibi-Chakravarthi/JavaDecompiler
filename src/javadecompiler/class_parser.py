@@ -50,6 +50,14 @@ class ClassFileReader:
         self.currentCursor += byteLength
         return val
 
+    def readRawBytes(self, byteLength: int) -> bytes:
+        if self.currentCursor + byteLength > self.fileLength:
+            raise EOFError("Reached end of file while trying to read raw bytes.")
+
+        val: bytes = self.fileData[self.currentCursor:self.currentCursor + byteLength]
+        self.currentCursor += byteLength
+        return val
+
 def parseClassHeader(classReader: ClassFileReader) -> int:
     magicNumber: int = classReader.readUnsignedInt()
     if magicNumber != 0xCAFEBABE:
@@ -172,6 +180,16 @@ def extractAndParseJar(jarFilePath: str, targetClassFile: str) -> Dict[int, Dict
         classReader: ClassFileReader = ClassFileReader(extractedFilePath)
         poolCount: int = parseClassHeader(classReader)
         constantPoolDict: Dict[int, Dict[str, Any]] = parseConstantPool(classReader, poolCount)
+
+        skipClassMetadataAndInterfaces(classReader)
+        skipFields(classReader)
+
+        methodBytecodes: Dict[str, bytes] = extractMethodBytecode(classReader, constantPoolDict)
+
+        print(f"\n[+] Extracted Bytecode for {len(methodBytecodes)} methods:")
+        for mName, mBytes in methodBytecodes.items():
+            print(f"    ├─ {mName}: {len(mBytes)} bytes of instructions")
+
         return constantPoolDict
     finally:
         if os.path.exists(extractedFilePath):
