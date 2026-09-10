@@ -1,0 +1,20 @@
+# Python Environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+
+# Java Compiled Binaries
+*.class
+*.jar
+*.war
+hs_err_pid*
+
+# NeuroDecomp Pipeline Specifics
+extractedClasses/
+
+# OS & IDE Settings
+.vscode/
+.idea/
+.DS_Store
