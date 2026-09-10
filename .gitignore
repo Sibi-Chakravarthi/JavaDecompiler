@@ -11,7 +11,11 @@ __pycache__/
 *.war
 hs_err_pid*
 
-# NeuroDecomp Pipeline Specifics
+# Test fixtures — intentionally committed .class files used by the pipeline's
+# own test/demo runs. Keep this list in sync with whatever you add here.
+!Java_Test_Files/*.class
+
+# Pipeline artifacts
 extractedClasses/
 
 # OS & IDE Settings
