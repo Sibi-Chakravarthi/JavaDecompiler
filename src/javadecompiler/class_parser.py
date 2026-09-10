@@ -184,3 +184,17 @@ def skipClassMetadataAndInterfaces(classReader: ClassFileReader) -> None:
 
     interfacesCount: int = classReader.readUnsignedShort()
     classReader.readRawBytes(interfacesCount * 2)
+
+def skipFields(classReader: ClassFileReader) -> None:
+    fieldsCount: int = classReader.readUnsignedShort()
+    
+    for _ in range(fieldsCount):
+        classReader.readUnsignedShort()
+        classReader.readUnsignedShort()
+        classReader.readUnsignedShort()
+        
+        attributesCount: int = classReader.readUnsignedShort()
+        for _ in range(attributesCount):
+            classReader.readUnsignedShort()
+            attributeLength: int = classReader.readUnsignedInt()
+            classReader.readRawBytes(attributeLength)
