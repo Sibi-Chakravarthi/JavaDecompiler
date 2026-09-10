@@ -49,3 +49,18 @@ class ClassFileReader:
         val: bytes = self.fileData[self.currentCursor:self.currentCursor + byteLength]
         self.currentCursor += byteLength
         return val
+
+def parseClassHeader(classReader: ClassFileReader) -> int:
+    magicNumber: int = classReader.readUnsignedInt()
+    if magicNumber != 0xCAFEBABE:
+        raise ValueError(f"Invalid class file: Expected magic number 0xCAFEBABE, found {hex(magicNumber)}")
+
+    minorVersion: int = classReader.readUnsignedShort()
+    majorVersion: int = classReader.readUnsignedShort()
+
+    constantPoolCount: int = classReader.readUnsignedShort()
+
+    print(f"Validated class file with magic number: {hex(magicNumber)}")
+    print(f"Class file version: {majorVersion}.{minorVersion}, Constant Pool Count: {constantPoolCount - 1}")
+
+    return constantPoolCount
