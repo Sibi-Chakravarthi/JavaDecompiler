@@ -176,3 +176,11 @@ def extractAndParseJar(jarFilePath: str, targetClassFile: str) -> Dict[int, Dict
     finally:
         if os.path.exists(extractedFilePath):
             os.remove(extractedFilePath)
+
+def skipClassMetadataAndInterfaces(classReader: ClassFileReader) -> None:
+    classReader.readUnsignedShort()
+    classReader.readUnsignedShort()
+    classReader.readUnsignedShort()
+
+    interfacesCount: int = classReader.readUnsignedShort()
+    classReader.readRawBytes(interfacesCount * 2)
