@@ -198,3 +198,33 @@ def skipFields(classReader: ClassFileReader) -> None:
             classReader.readUnsignedShort()
             attributeLength: int = classReader.readUnsignedInt()
             classReader.readRawBytes(attributeLength)
+
+def extractMethodBytecode(classReader: ClassFileReader, constantPool: Dict[int, Dict[str, Any]]) -> Dict[str, bytes]:
+    methodsCount: int = classReader.readUnsignedShort()
+    extractedMethods: Dict[str, bytes] = {}
+
+    for _ in range(methodsCount):
+        classReader.readUnsignedShort()
+        nameIndex: int = classReader.readUnsignedShort()
+        classReader.readUnsignedShort()
+        
+        methodName: str = constantPool[nameIndex].get("value", f"UnknownMethod_{nameIndex}")
+        attributesCount: int = classReader.readUnsignedShort()
+
+        for _ in range(attributesCount):
+            attributeNameIndex: int = classReader.readUnsignedShort()
+            attributeLength: int = classReader.readUnsignedInt()
+            
+            attributePayload: bytes = classReader.readRawBytes(attributeLength)
+            
+            attributeName: str = constantPool[attributeNameIndex].get("value", "")
+
+            if attributeName == "Code":
+
+                import struct
+                codeLength: int = struct.unpack_from('>I', attributePayload, 4)[0]
+
+                rawInstructions: bytes = attributePayload[8 : 8 + codeLength]
+                extractedMethods[methodName] = rawInstructions
+
+    return extractedMethods
