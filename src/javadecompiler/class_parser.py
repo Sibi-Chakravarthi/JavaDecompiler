@@ -256,14 +256,11 @@ def parseClassDirectly(classFilePath: str) -> Dict[str, bytes]:
 
 if __name__ == "__main__":
     from disassembler import disassembleMethod
-    
-    # 1. Point directly to the compiled class file
+
     targetClassPath = "EngineMath.class" 
-    
-    # 2. Call parseClassDirectly, NOT extractAndParseJar
+
     methodBytecodes = parseClassDirectly(targetClassPath)
-    
-    # 3. Disassemble and print
+
     for mName, mBytes in methodBytecodes.items():
         print(f"\nDisassembling Method: {mName}")
         parsedInstructions = disassembleMethod(mName, mBytes)
