@@ -35,3 +35,14 @@ def resolveBranchTarget(instruction: Dict[str, Any]) -> Optional[int]:
     return instruction["offset"] + rawOffset
  
  
+def fallsThrough(mnemonic: str) -> bool:
+    if mnemonic in unconditionalJumpMnemonics:
+        return False
+    if mnemonic in returnMnemonics:
+        return False
+    if mnemonic in throwMnemonics:
+        return False
+    if mnemonic in switchMnemonics:
+        return False
+    return True
+
