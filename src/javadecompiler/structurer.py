@@ -291,7 +291,7 @@ if __name__ == "__main__":
     from disassembler import disassembleMethod
     from cfg_builder import buildControlFlowGraph
 
-    for classFile in ("EngineMath.class", "LoopTest.class"):
+    for classFile in ("EngineMath.class", "LoopTest.class", "CombinedTest.class"):
         classFile = 'Java_Test_Files\\' + classFile
         methodBytecodes = parseClassDirectly(classFile)
         for methodName, methodBytes in methodBytecodes.items():
@@ -302,7 +302,7 @@ if __name__ == "__main__":
             print(f"\n=== {classFile} :: {methodName} ===")
             print("\n".join(renderPseudocode(tree)))
             
-        if classFile == "LoopTest.class":
+        if classFile == "Java_Test_Files\\LoopTest.class":
             methodBytecodes = parseClassDirectly(classFile)
             instructions = disassembleMethod("sumUpTo", methodBytecodes["sumUpTo"])
             cfg = buildControlFlowGraph(instructions)
