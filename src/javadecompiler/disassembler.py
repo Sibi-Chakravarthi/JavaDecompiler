@@ -81,7 +81,7 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0x7c: ("iushr", 0), 0x7d: ("lushr", 0),
     0x7e: ("iand", 0), 0x7f: ("land", 0), 0x80: ("ior", 0), 0x81: ("lor", 0),
     0x82: ("ixor", 0), 0x83: ("lxor", 0),
-    0x84: ("iinc", 2),         # Increment local variable by constant
+    0x84: ("iinc", 2),
 
     # --- Type conversions ---
 
@@ -105,11 +105,6 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0xa5: ("if_acmpeq", 2), 0xa6: ("if_acmpne", 2),
     0xa7: ("goto", 2),
     0xc6: ("ifnull", 2), 0xc7: ("ifnonnull", 2),
-    # NOTE: goto_w (0xc8) and jsr_w/jsr/ret (0xa8, 0xa9, 0xc9) deliberately
-    # excluded — goto_w uses a 4-byte signed offset, and resolveBranchTarget
-    # in cfg_builder.py currently assumes 2-byte branches everywhere. Adding
-    # goto_w here without also updating that assumption would parse the
-    # opcode but resolve its target wrong. Flag for whoever does that work.
 
     # --- Returns ---
 
@@ -125,13 +120,8 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0xb6: ("invokevirtual", 2),
     0xb7: ("invokespecial", 2),
     0xb8: ("invokestatic", 2),
-    # NOTE: invokeinterface (0xb9) and invokedynamic (0xba) deliberately
-    # excluded — both are 4-byte operands but with irregular internal
-    # layout (invokeinterface has a count byte + reserved zero byte;
-    # invokedynamic indexes a different constant pool entry format used
-    # for lambdas/string-concat). Treating them as a plain 4-byte skip
-    # would parse without crashing but silently mis-tag what the operand
-    # bytes mean — flag for dedicated handling, don't fake it.
+    0xb9: ("invokeinterface", 4),
+    0xba: ("invokedynamic", 4),
 
     0xbb: ("new", 2),
     0xbc: ("newarray", 1),
@@ -143,16 +133,6 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0xc2: ("monitorenter", 0),
     0xc3: ("monitorexit", 0),
     0xc5: ("multianewarray", 3),
-    # NOTE: wide (0xc4) deliberately excluded — it's a prefix opcode that
-    # changes how the NEXT opcode's operand is read (widens a 1-byte local
-    # index to 2 bytes, or wraps iinc into a 5-byte form). Needs its own
-    # parsing branch, not a fixed-length table entry.
-    # NOTE: tableswitch (0xaa) / lookupswitch (0xab) deliberately excluded
-    # — both have padding bytes to reach a 4-byte-aligned boundary before
-    # their variable-length jump table. cfg_builder.py already recognizes
-    # both mnemonics as block terminators (see switchMnemonics) and treats
-    # them as a safe dead end rather than guessing; decoding the actual
-    # jump table is real follow-up work, not a table entry.
 }
 
 
