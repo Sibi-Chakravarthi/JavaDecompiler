@@ -105,6 +105,10 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0xa5: ("if_acmpeq", 2), 0xa6: ("if_acmpne", 2),
     0xa7: ("goto", 2),
     0xc6: ("ifnull", 2), 0xc7: ("ifnonnull", 2),
+    0xa8: ("jsr", 2),          # Jump subroutine (legacy)
+    0xa9: ("ret", 1),          # Return from subroutine (legacy)
+    0xc8: ("goto_w", 4),       # Branch always (wide index)
+    0xc9: ("jsr_w", 4),        # Jump subroutine (wide index)
 
     # --- Returns ---
 
