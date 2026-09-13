@@ -22,3 +22,5 @@ extractedClasses/
 .vscode/
 .idea/
 .DS_Store
+
+cfg_maps/
