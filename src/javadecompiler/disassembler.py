@@ -24,6 +24,7 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0x57: ("pop", 0),          # Discard the top value on the operand stack
     0x60: ("iadd", 0),         # Add int
     0x64: ("isub", 0),         # Subtract int
+    0x70: ("irem", 0),         # Remainder int
     0x84: ("iinc", 2),         # Increment local variable by constant
     0x99: ("ifeq", 2),         # Branch if int comparison with zero succeeds
     0x9a: ("ifne", 2),         # Branch if int comparison with zero fails (!= 0)
