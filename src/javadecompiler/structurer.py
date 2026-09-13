@@ -134,7 +134,7 @@ class IfElseNode:
 @dataclass
 class WhileLoopNode:
     conditionBlock: BasicBlock
-    body: Any                    
+    body: Any
 
 
 @dataclass
@@ -142,18 +142,36 @@ class UnstructuredNode:
     block: BasicBlock
     reason: str
 
+
 def structureRegion(
     blocks: Dict[int, BasicBlock],
     currentOffset: Optional[int],
     stopOffset: Optional[int],
     loops: Dict[int, Dict[str, Any]],
+    _callStack: Optional[Set[Any]] = None,
 ) -> Any:
+    
+    if _callStack is None:
+        _callStack = set()
+
+    regionKey = (currentOffset, stopOffset)
+    if regionKey in _callStack:
+        block = blocks.get(currentOffset)
+        if block is not None:
+            return UnstructuredNode(
+                block,
+                f"control-flow cycle detected structuring region ({currentOffset} -> {stopOffset}); "
+                f"likely a loop shape with >2 effective successors that this algorithm doesn't model yet",
+            )
+        return SequenceNode([])
+    _callStack = _callStack | {regionKey}
+
     sequenceNodes: List[Any] = []
     visitedInThisRegion: Set[int] = set()
 
     while currentOffset is not None and currentOffset != stopOffset:
         if currentOffset in visitedInThisRegion:
-            break
+            break 
         visitedInThisRegion.add(currentOffset)
 
         block = blocks[currentOffset]
@@ -162,7 +180,7 @@ def structureRegion(
         if currentOffset in loops:
             loopInfo = loops[currentOffset]
             if loopInfo["bodyEntry"] is not None:
-                bodyNode = structureRegion(blocks, loopInfo["bodyEntry"], currentOffset, loops)
+                bodyNode = structureRegion(blocks, loopInfo["bodyEntry"], currentOffset, loops, _callStack)
             else:
                 bodyNode = SequenceNode([])
             sequenceNodes.append(WhileLoopNode(conditionBlock=block, body=bodyNode))
@@ -182,8 +200,8 @@ def structureRegion(
 
             mergeOffset = findMergePoint(blocks, thenOffset, elseOffset)
 
-            thenNode = structureRegion(blocks, thenOffset, mergeOffset, loops)
-            elseNode = None if elseOffset == mergeOffset else structureRegion(blocks, elseOffset, mergeOffset, loops)
+            thenNode = structureRegion(blocks, thenOffset, mergeOffset, loops, _callStack)
+            elseNode = None if elseOffset == mergeOffset else structureRegion(blocks, elseOffset, mergeOffset, loops, _callStack)
 
             sequenceNodes.append(IfElseNode(conditionBlock=block, thenBranch=thenNode, elseBranch=elseNode))
             currentOffset = mergeOffset
@@ -198,6 +216,7 @@ def structureRegion(
 
 
 def structureMethod(blocks: Dict[int, BasicBlock]) -> Any:
+    """Entry point: builds the full structured tree for one method's CFG."""
     entryOffset = min(blocks.keys())
     dominators = computeDominators(blocks, entryOffset)
     loops = identifyLoops(blocks, dominators)
@@ -291,8 +310,7 @@ if __name__ == "__main__":
     from disassembler import disassembleMethod
     from cfg_builder import buildControlFlowGraph
 
-    for classFile in ("EngineMath.class", "LoopTest.class", "CombinedTest.class"):
-        classFile = 'Java_Test_Files\\' + classFile
+    for classFile in ("EngineMath.class", "LoopTest.class"):
         methodBytecodes = parseClassDirectly(classFile)
         for methodName, methodBytes in methodBytecodes.items():
             instructions = disassembleMethod(methodName, methodBytes)
@@ -301,8 +319,8 @@ if __name__ == "__main__":
 
             print(f"\n=== {classFile} :: {methodName} ===")
             print("\n".join(renderPseudocode(tree)))
-            
-        if classFile == "Java_Test_Files\\LoopTest.class":
+
+        if classFile == "LoopTest.class":
             methodBytecodes = parseClassDirectly(classFile)
             instructions = disassembleMethod("sumUpTo", methodBytecodes["sumUpTo"])
             cfg = buildControlFlowGraph(instructions)
