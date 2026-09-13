@@ -110,10 +110,34 @@ def runBatch(rootDirectory, outputDirectory):
 
 
 if __name__ == "__main__":
+    import zipfile
+    import shutil
+    import tempfile
+
     if len(sys.argv) < 2:
-        print("Usage: python3 run_batch.py <directory-of-.class-files> [output-directory]")
+        print("Usage: python3 run_batch.py <directory-or-jar-file> [output-directory]")
         sys.exit(1)
 
-    inputDirectory = sys.argv[1]
+    inputPath = sys.argv[1]
     outDirectory = sys.argv[2] if len(sys.argv) > 2 else "cfg_maps"
-    runBatch(inputDirectory, outDirectory)
+    
+    tempExtractionDir = None
+
+    try:
+        if inputPath.endswith(".jar"):
+            if not os.path.isfile(inputPath):
+                print(f"Error: JAR file not found at {inputPath}")
+                sys.exit(1)
+                
+            print(f"Unpacking {inputPath} for batch processing...")
+            tempExtractionDir = tempfile.mkdtemp(prefix="neurodecomp_")
+            
+            with zipfile.ZipFile(inputPath, "r") as jarArchive:
+                jarArchive.extractall(tempExtractionDir)
+            runBatch(tempExtractionDir, outDirectory)
+        else:
+            runBatch(inputPath, outDirectory)
+            
+    finally:
+        if tempExtractionDir and os.path.exists(tempExtractionDir):
+            shutil.rmtree(tempExtractionDir)
