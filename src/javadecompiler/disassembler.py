@@ -24,6 +24,7 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0x57: ("pop", 0),          # Discard the top value on the operand stack
     0x60: ("iadd", 0),         # Add int
     0x64: ("isub", 0),         # Subtract int
+    0x70: ("irem", 0),         # Remainder int
     0x84: ("iinc", 2),         # Increment local variable by constant
     0x99: ("ifeq", 2),         # Branch if int comparison with zero succeeds
     0x9a: ("ifne", 2),         # Branch if int comparison with zero fails (!= 0)
@@ -31,6 +32,14 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0x9c: ("ifge", 2),         # Branch if int comparison >= 0
     0x9d: ("ifgt", 2),         # Branch if int comparison > 0
     0x9e: ("ifle", 2),         # Branch if int comparison <= 0
+    0x9f: ("if_icmpeq", 2),    # Branch if int comparison equal
+    0xa0: ("if_icmpne", 2),    # Branch if int comparison not equal
+    0xa1: ("if_icmplt", 2),    # Branch if int comparison less than
+    0xa2: ("if_icmpge", 2),    # Branch if int comparison greater or equal
+    0xa3: ("if_icmpgt", 2),    # Branch if int comparison greater than
+    0xa4: ("if_icmple", 2),    # Branch if int comparison less or equal
+    0xa5: ("if_acmpeq", 2),    # Branch if reference comparison equal
+    0xa6: ("if_acmpne", 2),    # Branch if reference comparison not equal
     0xa7: ("goto", 2),         # Branch always
     0xac: ("ireturn", 0),      # Return int from method
     0xad: ("lreturn", 0),      # Return long from method
