@@ -65,12 +65,11 @@ def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str,any]
         currentOffset += 1
 
         if opcode not in jvmOpcodes:
-            instructions.append({
-                "offset": instructionOffset,
-                "mnemonic": f"unknown_0x{opcode:02x}",
-                "operands": []
-            })
-            continue
+            raise ValueError(
+                f"Unrecognized opcode 0x{opcode:02x} at offset {instructionOffset} in method '{methodName}'. "
+                f"Not in jvmOpcodes — add it (with its correct operand length) before this method can be "
+                f"disassembled correctly."
+            )
 
         mnemonic, operandCount = jvmOpcodes[opcode]
         operands: List[int] = []
