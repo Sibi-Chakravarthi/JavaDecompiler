@@ -292,6 +292,7 @@ if __name__ == "__main__":
     from cfg_builder import buildControlFlowGraph
 
     for classFile in ("EngineMath.class", "LoopTest.class"):
+        classFile = 'Java_Test_Files\\' + classFile
         methodBytecodes = parseClassDirectly(classFile)
         for methodName, methodBytes in methodBytecodes.items():
             instructions = disassembleMethod(methodName, methodBytes)
