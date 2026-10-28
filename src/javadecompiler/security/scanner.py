@@ -73,7 +73,12 @@ class SecurityScanner:
         self.bounds = archive_bounds or ArchiveBounds()
         self.rules: List[SecurityRule] = get_all_rules(self.enabled_rules, self.disabled_rules)
 
-    def scan_class(self, class_info: ClassInfo, progress_callback: Optional[Callable[[int, int, str, str], None]] = None) -> ScanResult:
+    def scan_class(
+        self,
+        class_info: ClassInfo,
+        progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+        llm_progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+    ) -> ScanResult:
         """Helper to scan an in-memory ClassInfo instance directly."""
         return self._scan_classes(
             classes=[class_info],
@@ -82,9 +87,15 @@ class SecurityScanner:
             jar_findings=[],
             raw_class_dict={},
             progress_callback=progress_callback,
+            llm_progress_callback=llm_progress_callback,
         )
 
-    def scan_file(self, file_path: str, progress_callback: Optional[Callable[[int, int, str, str], None]] = None) -> ScanResult:
+    def scan_file(
+        self,
+        file_path: str,
+        progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+        llm_progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+    ) -> ScanResult:
         """Scans a .class or .jar file from disk."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Target file not found: {file_path}")
@@ -93,9 +104,15 @@ class SecurityScanner:
             file_bytes = f.read()
 
         file_name = os.path.basename(file_path)
-        return self.scan_bytes(file_bytes, file_name, progress_callback=progress_callback)
+        return self.scan_bytes(file_bytes, file_name, progress_callback=progress_callback, llm_progress_callback=llm_progress_callback)
 
-    def scan_bytes(self, file_bytes: bytes, file_name: str, progress_callback: Optional[Callable[[int, int, str, str], None]] = None) -> ScanResult:
+    def scan_bytes(
+        self,
+        file_bytes: bytes,
+        file_name: str,
+        progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+        llm_progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+    ) -> ScanResult:
         """Scans raw bytes in memory with full parser hardening and behavioral inspection."""
         sha256 = hashlib.sha256(file_bytes).hexdigest()
         is_jar = file_name.endswith(".jar") or file_bytes.startswith(b"PK\x03\x04")
@@ -120,6 +137,7 @@ class SecurityScanner:
             jar_findings=jar_findings,
             raw_class_dict=raw_class_dict,
             progress_callback=progress_callback,
+            llm_progress_callback=llm_progress_callback,
         )
 
     def _scan_classes(
@@ -130,6 +148,7 @@ class SecurityScanner:
         jar_findings: List[Finding],
         raw_class_dict: Dict[str, bytes],
         progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+        llm_progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
     ) -> ScanResult:
         timestamp = datetime.utcnow().isoformat() + "Z"
 
@@ -313,6 +332,7 @@ class SecurityScanner:
                     scan_result=temp_scan_result,
                     classes=classes,
                     raw_methods=raw_methods_dict,
+                    progress_callback=llm_progress_callback,
                 )
                 llm_stats = temp_scan_result.llmStats
 

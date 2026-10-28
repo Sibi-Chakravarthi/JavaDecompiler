@@ -146,15 +146,34 @@
             <h3 id="loading-text">Decompiling and Auditing Binary...</h3>
             <p id="loading-subtext">Phase 1-3 Decompilation &bull; Layer A-C Security Scan</p>
             
+            <!-- Static Decompilation & Static Rules Progress -->
             <div id="loading-progress-container" class="loading-progress-container">
+                <div class="loading-bar-header">
+                    <span class="loading-bar-title">Static Analysis &amp; Decompilation</span>
+                    <span id="loading-percentage" class="loading-percentage">0%</span>
+                </div>
                 <div class="loading-progress-bar-bg">
                     <div id="loading-progress-bar" class="loading-progress-bar" style="width: 0%;"></div>
                 </div>
                 <div class="loading-stats">
                     <span id="loading-count">Processing function 0 of 0</span>
-                    <span id="loading-percentage">0%</span>
                 </div>
                 <div id="loading-current-fn" class="loading-current-fn" title="Initializing...">Initializing...</div>
+            </div>
+
+            <!-- AI / LLM Deep-Dive Progress -->
+            <div id="loading-llm-container" class="loading-progress-container loading-llm-container hidden">
+                <div class="loading-bar-header">
+                    <span class="loading-bar-title"><span class="ai-sparkle">✦</span> AI / LLM Deep-Dive Analysis</span>
+                    <span id="loading-llm-percentage" class="loading-percentage">0%</span>
+                </div>
+                <div class="loading-progress-bar-bg">
+                    <div id="loading-llm-bar" class="loading-progress-bar loading-llm-bar" style="width: 0%;"></div>
+                </div>
+                <div class="loading-stats">
+                    <span id="loading-llm-count">Auditing candidate 0 of 0</span>
+                </div>
+                <div id="loading-llm-fn" class="loading-current-fn loading-llm-fn" title="Waiting for static scan...">Waiting for static scan...</div>
             </div>
         </div>
     </div>

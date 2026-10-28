@@ -134,6 +134,26 @@
             progressCurrentFn.title = "Initializing scan pipeline...";
         }
 
+        const isLlmEnabled = toggleLlm.checked;
+        const llmContainer = document.getElementById("loading-llm-container");
+        const llmBar = document.getElementById("loading-llm-bar");
+        const llmCount = document.getElementById("loading-llm-count");
+        const llmPct = document.getElementById("loading-llm-percentage");
+        const llmFn = document.getElementById("loading-llm-fn");
+
+        if (isLlmEnabled && llmContainer) {
+            llmContainer.classList.remove("hidden");
+            if (llmBar) llmBar.style.width = "0%";
+            if (llmCount) llmCount.textContent = "Auditing candidate 0 of 0";
+            if (llmPct) llmPct.textContent = "0%";
+            if (llmFn) {
+                llmFn.textContent = "Waiting for static scan to identify candidates...";
+                llmFn.title = "Waiting for static scan to identify candidates...";
+            }
+        } else if (llmContainer) {
+            llmContainer.classList.add("hidden");
+        }
+
         loadingOverlay.classList.remove("hidden");
 
         let pollInterval = setInterval(() => {
@@ -160,6 +180,35 @@
                             }
                             progressCurrentFn.textContent = fnDesc;
                             progressCurrentFn.title = fnDesc;
+                        }
+                    }
+
+                    // Update LLM progress bar if enabled
+                    if (isLlmEnabled && prog && llmContainer) {
+                        const llmTotal = prog.llmTotal || 0;
+                        const llmCurrent = prog.llmCurrent || 0;
+                        if (llmTotal > 0) {
+                            const pct = Math.min(100, Math.round((llmCurrent / llmTotal) * 100));
+                            if (llmBar) llmBar.style.width = `${pct}%`;
+                            if (llmCount) llmCount.textContent = `Auditing candidate ${llmCurrent} of ${llmTotal}`;
+                            if (llmPct) llmPct.textContent = `${pct}%`;
+                            if (llmFn) {
+                                let fnDesc = "";
+                                if (prog.llmClass && prog.llmMethod) {
+                                    fnDesc = `${prog.llmClass}#${prog.llmMethod}`;
+                                } else if (prog.llmClass) {
+                                    fnDesc = prog.llmClass;
+                                } else if (prog.llmMethod) {
+                                    fnDesc = prog.llmMethod;
+                                } else {
+                                    fnDesc = "Auditing suspicious candidate...";
+                                }
+                                llmFn.textContent = fnDesc;
+                                llmFn.title = fnDesc;
+                            }
+                        } else if (prog.status === "llm_auditing") {
+                            if (llmCount) llmCount.textContent = "Selecting suspicious candidates...";
+                            if (llmFn) llmFn.textContent = "Triaging methods...";
                         }
                     }
                 })

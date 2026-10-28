@@ -133,6 +133,11 @@ class UiServerHandler(BaseHTTPRequestHandler):
                     "total": 0,
                     "currentClass": "",
                     "currentMethod": "",
+                    "llmEnabled": False,
+                    "llmCurrent": 0,
+                    "llmTotal": 0,
+                    "llmClass": "",
+                    "llmMethod": "",
                 }
         self.send_json_response(data)
 
@@ -217,16 +222,31 @@ class UiServerHandler(BaseHTTPRequestHandler):
                 if c_info:
                     classes.append(c_info)
 
-            def progress_cb(current: int, total: int, c_name: str, m_name: str) -> None:
+            def static_progress_cb(current: int, total: int, c_name: str, m_name: str) -> None:
                 if scan_id:
                     with PROGRESS_LOCK:
-                        ACTIVE_PROGRESS[scan_id] = {
+                        cur_entry = ACTIVE_PROGRESS.setdefault(scan_id, {})
+                        cur_entry.update({
                             "status": "scanning",
                             "current": current,
                             "total": total,
                             "currentClass": c_name,
                             "currentMethod": m_name,
-                        }
+                            "llmEnabled": enable_llm,
+                        })
+
+            def llm_progress_cb(current: int, total: int, c_name: str, m_name: str) -> None:
+                if scan_id:
+                    with PROGRESS_LOCK:
+                        cur_entry = ACTIVE_PROGRESS.setdefault(scan_id, {})
+                        cur_entry.update({
+                            "status": "llm_auditing",
+                            "llmEnabled": True,
+                            "llmCurrent": current,
+                            "llmTotal": total,
+                            "llmClass": c_name,
+                            "llmMethod": m_name,
+                        })
 
             scan_res: ScanResult = scanner._scan_classes(
                 classes=classes,
@@ -234,7 +254,8 @@ class UiServerHandler(BaseHTTPRequestHandler):
                 sha256=hashlib.sha256(file_bytes).hexdigest(),
                 jar_findings=jar_findings,
                 raw_class_dict=raw_class_dict,
-                progress_callback=progress_cb,
+                progress_callback=static_progress_cb,
+                llm_progress_callback=llm_progress_cb,
             )
 
             # Extract decompiled methods and bytecode from scan_res & classes
@@ -252,7 +273,7 @@ class UiServerHandler(BaseHTTPRequestHandler):
                 for m_name, m_info in c_info.methods.items():
                     decomp_done += 1
                     if scan_id and (decomp_done % 10 == 0 or decomp_done == total_methods_all):
-                        progress_cb(decomp_done, total_methods_all, c_name, m_name)
+                        static_progress_cb(decomp_done, total_methods_all, c_name, m_name)
                     if not m_info.bytecode:
                         continue
 
@@ -314,13 +335,15 @@ class UiServerHandler(BaseHTTPRequestHandler):
             }
             if scan_id:
                 with PROGRESS_LOCK:
-                    ACTIVE_PROGRESS[scan_id] = {
+                    cur_entry = ACTIVE_PROGRESS.setdefault(scan_id, {})
+                    cur_entry.update({
                         "status": "complete",
                         "current": total_methods_all,
                         "total": total_methods_all,
                         "currentClass": "",
                         "currentMethod": "",
-                    }
+                        "llmCurrent": cur_entry.get("llmTotal", 0),
+                    })
             self.send_json_response(resp_payload)
 
         except Exception as e:

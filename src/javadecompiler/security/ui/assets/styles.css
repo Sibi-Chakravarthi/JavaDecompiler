@@ -641,8 +641,31 @@ body {
 }
 
 .loading-progress-container {
-    margin-top: 20px;
+    margin-top: 18px;
     width: 100%;
+    text-align: left;
+}
+
+.loading-bar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.loading-bar-title {
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+}
+
+.loading-percentage {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--accent-blue);
+    font-weight: 700;
 }
 
 .loading-progress-bar-bg {
@@ -650,7 +673,7 @@ body {
     background: rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     overflow: hidden;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .loading-progress-bar {
@@ -664,25 +687,49 @@ body {
 .loading-stats {
     display: flex;
     justify-content: space-between;
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     color: var(--text-muted);
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     font-variant-numeric: tabular-nums;
 }
 
 .loading-current-fn {
     font-family: var(--font-mono);
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     color: #58a6ff;
     background: rgba(56, 139, 253, 0.1);
     border: 1px solid rgba(56, 139, 253, 0.2);
-    padding: 6px 12px;
+    padding: 5px 10px;
     border-radius: 6px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
     box-sizing: border-box;
+    text-align: center;
+}
+
+/* Secondary LLM Progress Bar */
+.loading-llm-container {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.loading-llm-bar {
+    background: linear-gradient(90deg, #8957e5, #bc8cff, #58a6ff) !important;
+}
+
+.loading-llm-fn {
+    color: #d2a8ff !important;
+    background: rgba(163, 113, 247, 0.1) !important;
+    border-color: rgba(163, 113, 247, 0.25) !important;
+}
+
+.ai-sparkle {
+    color: #d2a8ff;
+    font-size: 0.95rem;
+    margin-right: 5px;
 }
 
 .spinner {

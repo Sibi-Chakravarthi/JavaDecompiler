@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from javadecompiler.class_parser import ClassInfo
 from javadecompiler.security.llm.cache import LlmDiskCache
@@ -81,6 +81,7 @@ class LlmAuditorHarness:
         scan_result: ScanResult,
         classes: List[ClassInfo],
         raw_methods: Dict[str, Dict[str, str]],
+        progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
     ) -> ScanResult:
         """Runs the LLM auditing pipeline over scan_result."""
         if not self.client.is_available():
@@ -90,16 +91,39 @@ class LlmAuditorHarness:
 
         class_map = {c.class_name: c for c in classes}
 
+        # Pre-select all target methods across all classes so total count is known upfront
+        targets_by_class: List[Tuple[ClassInfo, ClassAnalysis, List[str]]] = []
+        total_targets = 0
+
         for class_name, c_analysis in scan_result.classes.items():
             c_info = class_map.get(class_name)
             if not c_info:
                 continue
-
-            # Determine audit target methods
             target_method_names = self._select_target_methods(c_info, c_analysis, raw_methods.get(class_name, {}))
+            if target_method_names:
+                targets_by_class.append((c_info, c_analysis, target_method_names))
+                total_targets += len(target_method_names)
+
+        if progress_callback:
+            try:
+                progress_callback(0, total_targets, "", "")
+            except Exception:
+                pass
+
+        processed_count = 0
+
+        for c_info, c_analysis, target_method_names in targets_by_class:
+            class_name = c_info.class_name
 
             # Run deep-dive per target method
             for m_name in target_method_names:
+                processed_count += 1
+                if progress_callback:
+                    try:
+                        progress_callback(processed_count, total_targets, class_name, m_name)
+                    except Exception:
+                        pass
+
                 m_info = c_info.methods.get(m_name)
                 m_analysis = c_analysis.methods.get(m_name)
                 if not m_info or not m_analysis:
