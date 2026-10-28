@@ -73,6 +73,16 @@ class SecurityScanner:
         self.bounds = archive_bounds or ArchiveBounds()
         self.rules: List[SecurityRule] = get_all_rules(self.enabled_rules, self.disabled_rules)
 
+    def scan_class(self, class_info: ClassInfo) -> ScanResult:
+        """Helper to scan an in-memory ClassInfo instance directly."""
+        return self._scan_classes(
+            classes=[class_info],
+            file_name=f"{class_info.class_name}.class",
+            sha256="",
+            jar_findings=[],
+            raw_class_dict={},
+        )
+
     def scan_file(self, file_path: str) -> ScanResult:
         """Scans a .class or .jar file from disk."""
         if not os.path.exists(file_path):
@@ -87,7 +97,6 @@ class SecurityScanner:
     def scan_bytes(self, file_bytes: bytes, file_name: str) -> ScanResult:
         """Scans raw bytes in memory with full parser hardening and behavioral inspection."""
         sha256 = hashlib.sha256(file_bytes).hexdigest()
-        timestamp = datetime.utcnow().isoformat() + "Z"
         is_jar = file_name.endswith(".jar") or file_bytes.startswith(b"PK\x03\x04")
 
         classes: List[ClassInfo] = []
@@ -102,6 +111,24 @@ class SecurityScanner:
             jar_findings.extend(parse_findings)
             if c_info:
                 classes.append(c_info)
+
+        return self._scan_classes(
+            classes=classes,
+            file_name=file_name,
+            sha256=sha256,
+            jar_findings=jar_findings,
+            raw_class_dict=raw_class_dict,
+        )
+
+    def _scan_classes(
+        self,
+        classes: List[ClassInfo],
+        file_name: str,
+        sha256: str,
+        jar_findings: List[Finding],
+        raw_class_dict: Dict[str, bytes],
+    ) -> ScanResult:
+        timestamp = datetime.utcnow().isoformat() + "Z"
 
         # 2. Build CallGraph across all extracted classes
         call_graph = CallGraph.build(classes)

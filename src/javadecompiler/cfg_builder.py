@@ -78,6 +78,13 @@ def findLeaders(instructions: List[Dict[str, Any]]) -> Set[int]:
             if target is not None:
                 leaders.add(target)
 
+        if mnemonic in switchMnemonics:
+            default_target = instruction.get("defaultTarget")
+            if default_target is not None:
+                leaders.add(default_target)
+            for t in instruction.get("targets", []):
+                leaders.add(t)
+
         if mnemonic in terminatorMnemonics and index + 1 < len(instructions):
             leaders.add(instructions[index + 1]["offset"])
 
@@ -119,7 +126,12 @@ def wireEdges(blocks: Dict[int, BasicBlock]) -> None:
                 )
 
         if mnemonic in switchMnemonics:
-            pass
+            default_target = lastInstruction.get("defaultTarget")
+            if default_target is not None and default_target in blocks:
+                block.successors.add(default_target)
+            for target in lastInstruction.get("targets", []):
+                if target in blocks:
+                    block.successors.add(target)
 
         if fallsThrough(mnemonic) and position + 1 < len(sortedStarts):
             block.successors.add(sortedStarts[position + 1])

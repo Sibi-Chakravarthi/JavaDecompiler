@@ -457,7 +457,9 @@ class BehaviorDetector:
                 cls_ = call.get("class", "").replace(".", "/")
                 name_ = call.get("name", "")
 
-                if "StringBuilder" in cls_ and name_ == "append":
+                if ("StringBuilder" in cls_ and name_ == "append") or (
+                    "StringConcatFactory" in cls_ and "makeConcat" in name_
+                ):
                     has_concat = True
                     concat_off = off
 

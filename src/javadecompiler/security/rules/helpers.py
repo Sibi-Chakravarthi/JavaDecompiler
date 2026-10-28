@@ -23,6 +23,37 @@ def get_call_info(
 ) -> Optional[Dict[str, str]]:
     """Resolves target class, method name, and descriptor for invoke instructions."""
     mnemonic = instruction.get("mnemonic", "")
+    operands = instruction.get("operands", [])
+
+    if mnemonic == "invokedynamic":
+        if len(operands) >= 2:
+            idx = (operands[0] << 8) | operands[1]
+            entry = constant_pool.get(idx, {})
+            if entry.get("type") == "InvokeDynamic":
+                nt_idx = entry.get("nameAndTypeIndex", entry.get("name_and_type_index", 0))
+                m_name, desc = resolveNameAndType(constant_pool, nt_idx)
+                if not m_name:
+                    nt_entry = constant_pool.get(nt_idx, {})
+                    n_idx = nt_entry.get("nameIndex", nt_entry.get("name_index", 0))
+                    d_idx = nt_entry.get("descriptorIndex", nt_entry.get("descriptor_index", 0))
+                    m_name = resolveUtf8(constant_pool, n_idx)
+                    desc = resolveUtf8(constant_pool, d_idx)
+                cls_name = "java/lang/invoke/StringConcatFactory" if m_name and "makeConcat" in m_name else "java/lang/invoke/CallSite"
+                return {
+                    "kind": "InvokeDynamic",
+                    "class": cls_name,
+                    "name": m_name or "invokedynamic",
+                    "descriptor": desc or "",
+                }
+            elif "name" in entry:
+                return {
+                    "kind": "InvokeDynamic",
+                    "class": entry.get("class", "java/lang/invoke/StringConcatFactory"),
+                    "name": entry.get("name", "makeConcatWithConstants"),
+                    "descriptor": entry.get("descriptor", ""),
+                }
+        return None
+
     if not (
         mnemonic.startswith("invoke")
         and mnemonic != "invokedynamic"

@@ -180,3 +180,27 @@ uv run python -m javadecompiler.cli target.jar --security-scan --llm-audit --llm
 uv run python -m javadecompiler.cli --ui --port 8080
 ```
 Then open `http://localhost:8080` in your browser. Drag and drop any `.class` or `.jar` file to view real-time decompilation and highlighted inline vulnerability banners.
+
+### 5.3 Evaluation Benchmark & Baseline Regression Checking
+```powershell
+# Run benchmark with regression check against baseline
+uv run python scripts/eval_security.py --baseline tests/security_corpus/baseline_static.json
+
+# Run benchmark against local live Ollama model
+uv run python scripts/eval_security.py --config hybrid-ollama --model qwen2.5-coder:14b
+```
+
+---
+
+## 6. Modern JVM Opcode Robustness & Switch Support
+
+NeuroDecomp Phase 4 includes parsing and disassembly support for modern Java bytecode patterns:
+1. **`invokedynamic` String Concatenation (`makeConcatWithConstants`):**
+   - Automatically resolves dynamic method invocations emitted by `javac` in Java 9+ for string concatenation (`+`).
+   - Identifies bootstrap methods directed to `java/lang/invoke/StringConcatFactory`, linking tainted method arguments across dynamic concatenation into dangerous injection sinks (`JD-CHAIN-TAINT-SINK`, `JD-INJ-001`).
+2. **Variable-Length Switch Instructions (`tableswitch` 0xaa, `lookupswitch` 0xab):**
+   - Fully disassembles padding alignment, default targets, and all match/offset branch targets.
+   - Accurately computes control flow leaders and wires basic block branch successors in `cfg_builder.py`.
+3. **Graceful Malformed & Corrupted Opcode Fallback:**
+   - Any corrupt or unknown bytecodes are safely trapped without terminating the scan.
+   - Analysis coverage is flagged as `"partial"` with diagnostic limitations, ensuring the overall verdict is conservatively set to `REVIEW_RECOMMENDED` rather than false `CLEAN`.

@@ -234,6 +234,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate NeuroDecomp Security Auditor on synthetic corpus")
     parser.add_argument("--config", choices=["static-only", "hybrid-mock", "hybrid-ollama", "all"], default="static-only")
     parser.add_argument("--save-baseline", action="store_true", help="Save static-only results as baseline")
+    parser.add_argument("--baseline", help="Path to baseline static result JSON for regression checking")
     parser.add_argument("--model", default="qwen2.5-coder:14b", help="Model name for Ollama")
     args = parser.parse_args()
 
@@ -286,6 +287,21 @@ def main():
         if static_res:
             BASELINE_PATH.write_text(json.dumps(static_res, indent=2), encoding="utf-8")
             print(f"[+] Saved static baseline to: {BASELINE_PATH}")
+
+    # Check regression against baseline if requested
+    if args.baseline:
+        b_file = Path(args.baseline)
+        if not b_file.exists():
+            print(f"[!] Baseline file not found: {b_file}")
+            return 1
+        baseline_data = json.loads(b_file.read_text(encoding="utf-8"))
+        static_res = next((m for m in metrics_list if m["configName"] == "static-only"), metrics_list[0])
+        base_f1 = baseline_data.get("f1", 0.0)
+        curr_f1 = static_res.get("f1", 0.0)
+        if curr_f1 < base_f1 - 0.02:
+            print(f"[!] REGRESSION DETECTED: F1 dropped from {base_f1:.1%} to {curr_f1:.1%}")
+            return 2
+        print(f"[+] Baseline check PASSED: F1 {curr_f1:.1%} >= baseline {base_f1:.1%}")
 
     return 0
 

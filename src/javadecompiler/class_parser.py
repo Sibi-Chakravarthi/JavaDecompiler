@@ -158,18 +158,29 @@ def parseConstantPool(classReader: ClassFileReader, poolCount: int) -> Dict[int,
             currentIndex += 1 
 
         elif currentTag == tagMethodHandle:
-            classReader.readUnsignedByte()
-            classReader.readUnsignedShort()
-            constantPool[currentIndex] = {"type": "MethodHandle"}
+            referenceKind: int = classReader.readUnsignedByte()
+            referenceIndex: int = classReader.readUnsignedShort()
+            constantPool[currentIndex] = {
+                "type": "MethodHandle",
+                "referenceKind": referenceKind,
+                "referenceIndex": referenceIndex,
+            }
 
         elif currentTag == tagMethodType:
-            classReader.readUnsignedShort()
-            constantPool[currentIndex] = {"type": "MethodType"}
+            descriptorIndex: int = classReader.readUnsignedShort()
+            constantPool[currentIndex] = {
+                "type": "MethodType",
+                "descriptorIndex": descriptorIndex,
+            }
 
         elif currentTag == tagInvokeDynamic:
-            classReader.readUnsignedShort()
-            classReader.readUnsignedShort()
-            constantPool[currentIndex] = {"type": "InvokeDynamic"}
+            bootstrapMethodAttrIndex: int = classReader.readUnsignedShort()
+            nameAndTypeIndex: int = classReader.readUnsignedShort()
+            constantPool[currentIndex] = {
+                "type": "InvokeDynamic",
+                "bootstrapMethodAttrIndex": bootstrapMethodAttrIndex,
+                "nameAndTypeIndex": nameAndTypeIndex,
+            }
 
         else:
             raise NotImplementedError(f"Unsupported Constant Pool Tag '{currentTag}' encountered at index {currentIndex}.")
