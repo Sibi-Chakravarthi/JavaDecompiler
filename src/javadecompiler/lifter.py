@@ -16,6 +16,7 @@ try:
         resolveRef,
         resolveClass,
         resolveString,
+        resolveNameAndType,
         parseDescriptor,
     )
     from javadecompiler.cfg_builder import BasicBlock, buildControlFlowGraph, resolveBranchTarget
@@ -34,6 +35,7 @@ except ImportError:
         resolveRef,
         resolveClass,
         resolveString,
+        resolveNameAndType,
         parseDescriptor,
     )
     from cfg_builder import BasicBlock, buildControlFlowGraph, resolveBranchTarget
@@ -87,6 +89,15 @@ def invertCondition(cond: str) -> str:
     return f"!({inner})"
 
 
+def getSlotForParameter(method_info: MethodInfo, param_index: int) -> int:
+    """Returns the JVM local variable slot index for a given parameter index."""
+    slot = 0 if method_info.is_static else 1
+    for i in range(min(param_index, len(method_info.param_types))):
+        pType = method_info.param_types[i]
+        slot += 2 if pType in ("long", "double") else 1
+    return slot
+
+
 @dataclass
 class LifterContext:
     class_name: str
@@ -128,15 +139,15 @@ class BlockLiftResult:
 class StackSimulator:
     """Simulates JVM operand stack and local variable assignments over instructions in a block."""
 
-    def __init__(self, context: LifterContext) -> None:
+    def __init__(self, context: LifterContext, initial_stack: Optional[List[str]] = None) -> None:
         self.context = context
-        self.stack: List[str] = []
+        self.stack: List[str] = list(initial_stack) if initial_stack is not None else []
         self.locals: Dict[int, str] = dict(context.param_map)
 
-    def _pop(self) -> str:
+    def _pop(self, fallback: str = "_stack_undef") -> str:
         if self.stack:
             return self.stack.pop()
-        return "/* stack_underflow */"
+        return fallback
 
     def _push(self, val: str) -> None:
         self.stack.append(val)
@@ -152,6 +163,12 @@ class StackSimulator:
         branch_target: Optional[int] = None
         terminator: Optional[str] = None
         cp = self.context.constant_pool
+
+        # If block starts at an exception handler target and stack is empty, seed caught exception
+        ex_handlers = getattr(self.context.method_info, "exception_handlers", [])
+        handler_pcs = {h.get("handler_pc") for h in ex_handlers}
+        if block.startOffset in handler_pcs and not self.stack:
+            self._push("caughtEx")
 
         for instruction in block.instructions:
             mnemonic: str = instruction["mnemonic"]
@@ -174,15 +191,19 @@ class StackSimulator:
             elif mnemonic.startswith("dconst_"):
                 self._push(f"{float(mnemonic.split('_')[1])}")
             elif mnemonic == "bipush":
-                val = operands[0] if operands[0] < 128 else operands[0] - 256
+                val = instruction.get("value")
+                if val is None:
+                    val = operands[0] if operands[0] < 128 else operands[0] - 256
                 self._push(str(val))
             elif mnemonic == "sipush":
-                raw = (operands[0] << 8) | operands[1]
-                val = raw if raw < 0x8000 else raw - 0x10000
+                val = instruction.get("value")
+                if val is None:
+                    raw = (operands[0] << 8) | operands[1]
+                    val = raw if raw < 0x8000 else raw - 0x10000
                 self._push(str(val))
             elif mnemonic in ("ldc", "ldc_w", "ldc2_w"):
                 idx = operands[0] if mnemonic == "ldc" else ((operands[0] << 8) | operands[1])
-                entry = cp.get(idx, {})
+                entry = cp.get(idx) or {}
                 eType = entry.get("type", "")
                 if eType == "String":
                     sVal = resolveString(cp, idx)
@@ -254,8 +275,8 @@ class StackSimulator:
                 a = self._pop()
                 self._push(f"-{a}")
             elif mnemonic == "iinc":
-                slot = operands[0]
-                amount = operands[1] if operands[1] < 128 else operands[1] - 256
+                slot = instruction.get("var_index", operands[0] if operands else 0)
+                amount = instruction.get("const", (operands[1] if operands[1] < 128 else operands[1] - 256) if len(operands) > 1 else 1)
                 varName = self._getVar(slot)
                 if amount == 1:
                     statements.append(f"{varName}++;")
@@ -287,6 +308,14 @@ class StackSimulator:
                 cName = resolveClass(cp, idx).replace('/', '.').split('.')[-1]
                 sz = self._pop()
                 self._push(f"new {cName}[{sz}]")
+            elif mnemonic == "multianewarray":
+                idx = (operands[0] << 8) | operands[1]
+                dims_count = operands[2] if len(operands) > 2 else 1
+                cName = resolveClass(cp, idx).replace('/', '.').split('.')[-1].replace('[]', '')
+                dims = [self._pop() for _ in range(dims_count)]
+                dims.reverse()
+                dimStr = "".join(f"[{d}]" for d in dims)
+                self._push(f"new {cName}{dimStr}")
             elif mnemonic == "arraylength":
                 arr = self._pop()
                 self._push(f"{arr}.length")
@@ -299,6 +328,16 @@ class StackSimulator:
                 idx = self._pop()
                 arr = self._pop()
                 statements.append(f"{arr}[{idx}] = {val};")
+            elif mnemonic == "checkcast":
+                idx = (operands[0] << 8) | operands[1]
+                cName = resolveClass(cp, idx).replace('/', '.').split('.')[-1]
+                obj = self._pop()
+                self._push(f"(({cName}) {obj})")
+            elif mnemonic == "instanceof":
+                idx = (operands[0] << 8) | operands[1]
+                cName = resolveClass(cp, idx).replace('/', '.').split('.')[-1]
+                obj = self._pop()
+                self._push(f"({obj} instanceof {cName})")
 
             # --- Stack Manipulation ---
             elif mnemonic == "dup":
@@ -316,7 +355,6 @@ class StackSimulator:
                     self._push(self.stack[-1])
             elif mnemonic in ("pop", "pop2"):
                 v = self._pop()
-                # If popped expression might have side effects (e.g., function call), emit statement
                 if "(" in v or "new " in v:
                     statements.append(f"{v};")
             elif mnemonic == "swap":
@@ -400,13 +438,62 @@ class StackSimulator:
                         else:
                             self._push(callExpr)
 
+            elif mnemonic == "invokedynamic":
+                idx = (operands[0] << 8) | operands[1]
+                entry = cp.get(idx) or {}
+                nt_idx = entry.get("nameAndTypeIndex", 0)
+                mName, desc = "", ""
+                if nt_idx:
+                    mName, desc = resolveNameAndType(cp, nt_idx)
+                pTypes, retType = parseDescriptor(desc)
+
+                args = []
+                for _ in range(len(pTypes)):
+                    args.append(self._pop())
+                args.reverse()
+
+                if "makeConcat" in mName or mName == "makeConcatWithConstants":
+                    concatExpr = " + ".join(args) if args else '""'
+                    if retType == "void":
+                        statements.append(f"{concatExpr};")
+                    else:
+                        self._push(concatExpr)
+                else:
+                    callName = mName or f"dynamicCall_{idx}"
+                    callExpr = f"invokedynamic {callName}({', '.join(args)})"
+                    if retType == "void":
+                        statements.append(f"{callExpr};")
+                    else:
+                        self._push(callExpr)
+
+            elif mnemonic == "wide":
+                wide_op = instruction.get("wide_opcode", "")
+                slot = instruction.get("index", 0)
+                if wide_op in ("iload", "lload", "fload", "dload", "aload"):
+                    self._push(self._getVar(slot))
+                elif wide_op in ("istore", "lstore", "fstore", "dstore", "astore"):
+                    val = self._pop()
+                    statements.append(f"{self._getVar(slot)} = {val};")
+                elif wide_op == "iinc":
+                    amount = instruction.get("const", 0)
+                    varName = self._getVar(slot)
+                    if amount == 1:
+                        statements.append(f"{varName}++;")
+                    elif amount == -1:
+                        statements.append(f"{varName}--;")
+                    elif amount > 0:
+                        statements.append(f"{varName} += {amount};")
+                    else:
+                        statements.append(f"{varName} -= {-amount};")
+                elif wide_op == "ret":
+                    statements.append(f"ret {self._getVar(slot)};")
+
             # --- Returns & Terminators ---
             elif mnemonic in ("ireturn", "lreturn", "freturn", "dreturn", "areturn"):
                 retVal = self._pop()
                 statements.append(f"return {retVal};")
                 terminator = mnemonic
             elif mnemonic == "return":
-                # For void methods, only emit return if there was prior code or explicit return path
                 statements.append("return;")
                 terminator = mnemonic
             elif mnemonic == "athrow":
@@ -483,7 +570,6 @@ def _renderStructuredNode(
         res = lifted_blocks.get(node.block.startOffset)
         if res:
             for stmt in res.statements:
-                # Omit synthetic return in constructors or at the very end of void methods
                 lines.append(f"{pad}{stmt}")
 
     elif isinstance(node, IfElseNode):
@@ -493,11 +579,6 @@ def _renderStructuredNode(
                 lines.append(f"{pad}{stmt}")
 
             cond = res.condition or "true"
-            # Note on branch polarity in JVM:
-            # Jumping to branch_target occurs when condition is TRUE.
-            # In structurer.py:
-            # fallthrough is assigned to thenBranch, branchTarget is assigned to elseBranch.
-            # Therefore, entering thenBranch requires INVERTING the jump condition!
             effectiveCond = invertCondition(cond)
 
             lines.append(f"{pad}if ({effectiveCond}) {{")
@@ -517,9 +598,6 @@ def _renderStructuredNode(
                 lines.append(f"{pad}{stmt}")
 
             cond = res.condition or "true"
-            # In JVM while loops, the condition block branches to EXIT when condition is met,
-            # and falls through into the loop body.
-            # Therefore, staying in the body requires INVERTING the condition test!
             effectiveCond = invertCondition(cond)
 
             lines.append(f"{pad}while ({effectiveCond}) {{")
@@ -557,7 +635,8 @@ def liftMethod(
     except ImportError:
         from disassembler import disassembleMethod
     instructions = disassembleMethod(method_name, method_info.bytecode)
-    cfg = buildControlFlowGraph(instructions)
+    ex_handlers = getattr(method_info, "exception_handlers", [])
+    cfg = buildControlFlowGraph(instructions, ex_handlers)
     try:
         tree = structureMethod(cfg)
     except Exception:
@@ -568,13 +647,13 @@ def liftMethod(
         tree = SequenceNode([BlockNode(b) for b in cfg.values()])
 
     context = LifterContext.create(class_info, method_info)
-    simulator = StackSimulator(context)
 
     # Simulate and lift each basic block in the CFG
+    handler_pcs = {h.get("handler_pc") for h in ex_handlers}
     lifted_blocks: Dict[int, BlockLiftResult] = {}
     for offset, block in cfg.items():
-        # Fresh simulator per block (in basic blocks stack depth resets or flows cleanly)
-        blockSim = StackSimulator(context)
+        init_stack = ["caughtEx"] if offset in handler_pcs else None
+        blockSim = StackSimulator(context, initial_stack=init_stack)
         lifted_blocks[offset] = blockSim.liftBlock(block)
 
     bodyLines = _renderStructuredNode(tree, lifted_blocks, indent=1)

@@ -80,6 +80,58 @@ OS_API_PATTERNS = {
 }
 
 
+def stripMarkdownFences(text: str) -> str:
+    """Strips markdown code fences like ```java ... ``` or ```json ... ``` and leading/trailing whitespace."""
+    if not text:
+        return ""
+    cleaned = text.strip()
+    # Match enclosed ```lang ... ```
+    m = re.match(r"^```(?:[a-zA-Z0-9_-]+)?\s*\n?(.*?)\n?```$", cleaned, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # If starting or ending with ```
+    cleaned = re.sub(r"^```(?:[a-zA-Z0-9_-]+)?\s*\n?", "", cleaned)
+    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+    return cleaned.strip()
+
+
+def extractJsonPayload(text: str) -> Optional[Dict[str, Any]]:
+    """Extracts a valid JSON dict from raw text, code fences, or surrounding conversational text."""
+    if not text or not text.strip():
+        return None
+    cleaned = text.strip()
+    # 1. Direct parse
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    # 2. Strip code fences
+    unfenced = stripMarkdownFences(cleaned)
+    try:
+        data = json.loads(unfenced)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    # 3. Search for outermost curly braces
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        snippet = cleaned[start : end + 1]
+        try:
+            data = json.loads(snippet)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+    return None
+
+
 @dataclass
 class OSContext:
     categories: List[str] = field(default_factory=list)
@@ -262,7 +314,7 @@ Return ONLY a valid JSON object matching this schema:
                 result = self._queryOllama(class_info, method_name, raw_code, os_context)
                 if result:
                     return result
-            except Exception as e:
+            except Exception:
                 # Fall back gracefully to offline heuristic mode
                 pass
 
@@ -292,30 +344,38 @@ Return ONLY a valid JSON object matching this schema:
             method="POST",
         )
 
-        with urllib.request.urlopen(req, timeout=self.timeout) as response:
-            respBody = response.read().decode("utf-8")
-            parsed = json.loads(respBody)
-            replyText = parsed.get("response", "")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                respBody = response.read().decode("utf-8", errors="replace")
+                parsed = json.loads(respBody)
+                replyText = parsed.get("response", "")
 
-            # Parse inner JSON
-            data = json.loads(replyText)
-            renamed = data.get("renamed_variables", {})
-            javadoc = data.get("javadoc", "")
-            reconstructed = data.get("reconstructed_code", "")
+                data = extractJsonPayload(replyText)
+                if not data:
+                    return None
 
-            if not reconstructed:
-                # Apply variable renaming onto raw code
-                reconstructed = self._applyRenaming(raw_code, renamed)
-                if javadoc:
-                    reconstructed = f"{javadoc}\n{reconstructed}"
+                renamed = data.get("renamed_variables", {})
+                if not isinstance(renamed, dict):
+                    renamed = {}
 
-            return RestorationResult(
-                method_name=method_name,
-                renamed_variables=renamed,
-                javadoc=javadoc,
-                reconstructed_code=reconstructed,
-                mode="ollama",
-            )
+                javadoc = stripMarkdownFences(data.get("javadoc", "")).strip()
+                reconstructed = stripMarkdownFences(data.get("reconstructed_code", "")).strip()
+
+                # Guard against empty, whitespace, or hallucinated output
+                if not reconstructed or method_name not in reconstructed:
+                    reconstructed = self._applyRenaming(raw_code, renamed)
+                    if javadoc:
+                        reconstructed = f"{javadoc}\n{reconstructed}"
+
+                return RestorationResult(
+                    method_name=method_name,
+                    renamed_variables=renamed,
+                    javadoc=javadoc,
+                    reconstructed_code=reconstructed,
+                    mode="ollama",
+                )
+        except Exception:
+            return None
 
     def _heuristicFallback(
         self,
