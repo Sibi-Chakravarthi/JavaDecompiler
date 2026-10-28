@@ -19,11 +19,26 @@ try:
     from javadecompiler.cfg_builder import buildControlFlowGraph, printControlFlowGraphToString
     from javadecompiler.disassembler import disassembleMethod
     from javadecompiler.semantic_restorer import OSContext, RestorationResult
+    from javadecompiler.security.reporting.html_section import (
+        render_method_findings_html,
+        render_security_banner,
+        render_security_styles,
+    )
 except ImportError:
     from class_parser import ClassInfo
     from cfg_builder import buildControlFlowGraph, printControlFlowGraphToString
     from disassembler import disassembleMethod
     from semantic_restorer import OSContext, RestorationResult
+    try:
+        from security.reporting.html_section import (
+            render_method_findings_html,
+            render_security_banner,
+            render_security_styles,
+        )
+    except ImportError:
+        def render_security_styles() -> str: return ""
+        def render_security_banner(sr: Any) -> str: return ""
+        def render_method_findings_html(f: Any) -> str: return ""
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -266,6 +281,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             color: var(--text-secondary);
             font-size: 13px;
         }}
+        {security_styles}
     </style>
 </head>
 <body>
@@ -299,6 +315,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
     </header>
 
+    {security_banner}
+
     <main>
         {classes_html}
     </main>
@@ -329,10 +347,14 @@ def generateHtmlReport(
     restored_methods: Dict[str, Dict[str, RestorationResult]], # class_name -> method_name -> RestorationResult
     target_name: str,
     ai_engine: str = "Local LLM (qwen2.5-coder:14b)",
+    scan_result: Optional[Any] = None,
 ) -> str:
     """Renders a complete, standalone dark-themed HTML report."""
     total_methods = sum(len(c.methods) for c in classes)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    security_styles = render_security_styles() if scan_result else ""
+    security_banner = render_security_banner(scan_result) if scan_result else ""
 
     classes_html_list: List[str] = []
 
@@ -351,6 +373,11 @@ def generateHtmlReport(
         badges = "".join(_getBadgeForCategory(cat) for cat in whole_ctx.categories)
         if not badges:
             badges = '<span class="badge badge-clean">Pure Algorithmic Computation</span>'
+
+        class_scan = scan_result.classes.get(cName) if scan_result and hasattr(scan_result, "classes") else None
+        class_findings_html = ""
+        if class_scan and hasattr(class_scan, "findings") and class_scan.findings:
+            class_findings_html = render_method_findings_html(class_scan.findings)
 
         methods_html_list: List[str] = []
 
@@ -372,6 +399,13 @@ def generateHtmlReport(
                 items = [f"<b>{k}</b> &rarr; <i>{v}</i>" for k, v in restResult.renamed_variables.items()]
                 renamed_html = f'<div class="renamed-vars"><strong>Restored Identifiers:</strong> {", ".join(items)}</div>'
 
+            # Security findings for method
+            method_findings_html = ""
+            if class_scan and hasattr(class_scan, "methods"):
+                m_analysis = class_scan.methods.get(mName)
+                if m_analysis and hasattr(m_analysis, "findings") and m_analysis.findings:
+                    method_findings_html = render_method_findings_html(m_analysis.findings)
+
             # Method OS context
             mCtx = extractOsContext(cInfo, mName, rawCode, mInfo)
             mBadges = "".join(_getBadgeForCategory(cat) for cat in mCtx.categories)
@@ -385,6 +419,7 @@ def generateHtmlReport(
                     <div>{mBadges}</div>
                 </div>
                 {renamed_html}
+                {method_findings_html}
                 <div class="pipeline-grid">
                     <div class="stage-box">
                         <div class="stage-header">
@@ -425,6 +460,7 @@ def generateHtmlReport(
                 </div>
                 <div>{badges}</div>
             </div>
+            {class_findings_html}
             {"".join(methods_html_list)}
         </section>
         """
@@ -437,4 +473,6 @@ def generateHtmlReport(
         ai_engine=html.escape(ai_engine),
         timestamp=timestamp,
         classes_html="".join(classes_html_list),
+        security_styles=security_styles,
+        security_banner=security_banner,
     )
