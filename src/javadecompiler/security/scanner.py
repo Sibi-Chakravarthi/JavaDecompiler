@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from javadecompiler.class_parser import ClassInfo
 from javadecompiler.disassembler import disassembleMethod
@@ -73,7 +73,7 @@ class SecurityScanner:
         self.bounds = archive_bounds or ArchiveBounds()
         self.rules: List[SecurityRule] = get_all_rules(self.enabled_rules, self.disabled_rules)
 
-    def scan_class(self, class_info: ClassInfo) -> ScanResult:
+    def scan_class(self, class_info: ClassInfo, progress_callback: Optional[Callable[[int, int, str, str], None]] = None) -> ScanResult:
         """Helper to scan an in-memory ClassInfo instance directly."""
         return self._scan_classes(
             classes=[class_info],
@@ -81,9 +81,10 @@ class SecurityScanner:
             sha256="",
             jar_findings=[],
             raw_class_dict={},
+            progress_callback=progress_callback,
         )
 
-    def scan_file(self, file_path: str) -> ScanResult:
+    def scan_file(self, file_path: str, progress_callback: Optional[Callable[[int, int, str, str], None]] = None) -> ScanResult:
         """Scans a .class or .jar file from disk."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Target file not found: {file_path}")
@@ -92,9 +93,9 @@ class SecurityScanner:
             file_bytes = f.read()
 
         file_name = os.path.basename(file_path)
-        return self.scan_bytes(file_bytes, file_name)
+        return self.scan_bytes(file_bytes, file_name, progress_callback=progress_callback)
 
-    def scan_bytes(self, file_bytes: bytes, file_name: str) -> ScanResult:
+    def scan_bytes(self, file_bytes: bytes, file_name: str, progress_callback: Optional[Callable[[int, int, str, str], None]] = None) -> ScanResult:
         """Scans raw bytes in memory with full parser hardening and behavioral inspection."""
         sha256 = hashlib.sha256(file_bytes).hexdigest()
         is_jar = file_name.endswith(".jar") or file_bytes.startswith(b"PK\x03\x04")
@@ -118,6 +119,7 @@ class SecurityScanner:
             sha256=sha256,
             jar_findings=jar_findings,
             raw_class_dict=raw_class_dict,
+            progress_callback=progress_callback,
         )
 
     def _scan_classes(
@@ -127,6 +129,7 @@ class SecurityScanner:
         sha256: str,
         jar_findings: List[Finding],
         raw_class_dict: Dict[str, bytes],
+        progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
     ) -> ScanResult:
         timestamp = datetime.utcnow().isoformat() + "Z"
 
@@ -135,6 +138,7 @@ class SecurityScanner:
         behavior_detector = BehaviorDetector(call_graph=call_graph)
 
         # 3. Disassembly, Lifting, and Rule Execution
+        total_methods_target = sum(len(c.methods) for c in classes)
         total_methods = 0
         full_coverage_methods = 0
         partial_coverage_methods = 0
@@ -162,6 +166,11 @@ class SecurityScanner:
 
             for m_name, m_info in c_info.methods.items():
                 total_methods += 1
+                if progress_callback:
+                    try:
+                        progress_callback(total_methods, total_methods_target, c_name, m_name)
+                    except Exception:
+                        pass
                 coverage = "full"
                 partial_reason: Optional[str] = None
                 lifted_code = ""

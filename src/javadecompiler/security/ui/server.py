@@ -21,8 +21,13 @@ import tempfile
 import time
 import urllib.request
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+ACTIVE_PROGRESS: Dict[str, Dict[str, Any]] = {}
+PROGRESS_LOCK = threading.Lock()
 from typing import Any, Dict, List, Optional
 
 from javadecompiler.class_parser import ClassInfo, parseClassFile, parseJarFile
@@ -85,6 +90,8 @@ class UiServerHandler(BaseHTTPRequestHandler):
             self.send_file_response(ASSETS_DIR / "app.js", "application/javascript")
         elif url_path == "/api/health":
             self._handle_health()
+        elif url_path == "/api/scan/progress":
+            self._handle_progress()
         else:
             self.send_response(404)
             self.end_headers()
@@ -110,6 +117,25 @@ class UiServerHandler(BaseHTTPRequestHandler):
             "modelsAvailable": models,
         })
 
+    def _handle_progress(self) -> None:
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        scan_id = qs.get("id", [""])[0]
+
+        with PROGRESS_LOCK:
+            info = ACTIVE_PROGRESS.get(scan_id)
+            if info:
+                data = dict(info)
+            else:
+                data = {
+                    "status": "idle",
+                    "current": 0,
+                    "total": 0,
+                    "currentClass": "",
+                    "currentMethod": "",
+                }
+        self.send_json_response(data)
+
     def do_POST(self) -> None:
         url_path = self.path.split("?")[0]
         if url_path == "/api/scan":
@@ -130,6 +156,7 @@ class UiServerHandler(BaseHTTPRequestHandler):
         # Parse request body (JSON or multipart)
         file_name = "target.class"
         file_bytes = b""
+        scan_id = ""
         enable_llm = False
         llm_investigate = False
         audit_model = "qwen2.5-coder:14b"
@@ -142,6 +169,7 @@ class UiServerHandler(BaseHTTPRequestHandler):
                 file_name = req_json.get("fileName", "target.class")
                 b64_data = req_json.get("fileBase64", "")
                 file_bytes = base64.b64decode(b64_data)
+                scan_id = str(req_json.get("scanId", ""))
                 options = req_json.get("options", {})
                 enable_llm = bool(options.get("enableLlm", False))
                 llm_investigate = bool(options.get("llmInvestigate", False))
@@ -154,6 +182,7 @@ class UiServerHandler(BaseHTTPRequestHandler):
             header_name = self.headers.get("X-Filename")
             if header_name:
                 file_name = header_name
+            scan_id = self.headers.get("X-Scan-Id", "")
             file_bytes = body_bytes
 
         if not file_bytes:
@@ -188,17 +217,31 @@ class UiServerHandler(BaseHTTPRequestHandler):
                 if c_info:
                     classes.append(c_info)
 
+            def progress_cb(current: int, total: int, c_name: str, m_name: str) -> None:
+                if scan_id:
+                    with PROGRESS_LOCK:
+                        ACTIVE_PROGRESS[scan_id] = {
+                            "status": "scanning",
+                            "current": current,
+                            "total": total,
+                            "currentClass": c_name,
+                            "currentMethod": m_name,
+                        }
+
             scan_res: ScanResult = scanner._scan_classes(
                 classes=classes,
                 file_name=file_name,
                 sha256=hashlib.sha256(file_bytes).hexdigest(),
                 jar_findings=jar_findings,
                 raw_class_dict=raw_class_dict,
+                progress_callback=progress_cb,
             )
 
             # Extract decompiled methods and bytecode from scan_res & classes
             raw_methods_dict: Dict[str, Dict[str, str]] = {}
             decompiled_data: Dict[str, Dict[str, Dict[str, str]]] = {}
+            total_methods_all = sum(len(c.methods) for c in classes)
+            decomp_done = 0
 
             for c_info in classes:
                 c_name = c_info.class_name
@@ -207,6 +250,9 @@ class UiServerHandler(BaseHTTPRequestHandler):
                 c_analysis = scan_res.classes.get(c_name)
 
                 for m_name, m_info in c_info.methods.items():
+                    decomp_done += 1
+                    if scan_id and (decomp_done % 10 == 0 or decomp_done == total_methods_all):
+                        progress_cb(decomp_done, total_methods_all, c_name, m_name)
                     if not m_info.bytecode:
                         continue
 
@@ -266,6 +312,15 @@ class UiServerHandler(BaseHTTPRequestHandler):
                 "sarifReport": sarif_str,
                 "executionTimeMs": elapsed_ms,
             }
+            if scan_id:
+                with PROGRESS_LOCK:
+                    ACTIVE_PROGRESS[scan_id] = {
+                        "status": "complete",
+                        "current": total_methods_all,
+                        "total": total_methods_all,
+                        "currentClass": "",
+                        "currentMethod": "",
+                    }
             self.send_json_response(resp_payload)
 
         except Exception as e:
@@ -278,8 +333,14 @@ def start_ui_server(port: int = 8080, host: str = "127.0.0.1", open_browser: boo
     """Starts the Drag-and-Drop Web UI server."""
     server_address = (host, port)
     try:
-        httpd = HTTPServer(server_address, UiServerHandler)
-    except OSError as e:
+        httpd = ThreadingHTTPServer(server_address, UiServerHandler)
+        httpd.daemon_threads = True
+    except (OSError, ImportError) as e:
+        try:
+            httpd = HTTPServer(server_address, UiServerHandler)
+        except OSError as e2:
+            print(f"[!] Could not bind to {host}:{port}: {e2}")
+            return 1
         print(f"[!] Could not bind to {host}:{port}: {e}")
         return 1
 

@@ -117,7 +117,54 @@
             return;
         }
 
+        const scanId = "scan_" + Date.now() + "_" + Math.random().toString(36).substring(2, 8);
+
+        const progressBar = document.getElementById("loading-progress-bar");
+        const progressCount = document.getElementById("loading-count");
+        const progressPct = document.getElementById("loading-percentage");
+        const progressCurrentFn = document.getElementById("loading-current-fn");
+        const loadingText = document.getElementById("loading-text");
+
+        if (loadingText) loadingText.textContent = "Decompiling and Auditing Binary...";
+        if (progressBar) progressBar.style.width = "0%";
+        if (progressCount) progressCount.textContent = "Processing function 0 of 0";
+        if (progressPct) progressPct.textContent = "0%";
+        if (progressCurrentFn) {
+            progressCurrentFn.textContent = "Initializing scan pipeline...";
+            progressCurrentFn.title = "Initializing scan pipeline...";
+        }
+
         loadingOverlay.classList.remove("hidden");
+
+        let pollInterval = setInterval(() => {
+            fetch(`/api/scan/progress?id=${scanId}`)
+                .then(res => res.json())
+                .then(prog => {
+                    if (prog && prog.total > 0) {
+                        const current = prog.current || 0;
+                        const total = prog.total;
+                        const pct = Math.min(100, Math.round((current / total) * 100));
+                        if (progressBar) progressBar.style.width = `${pct}%`;
+                        if (progressCount) progressCount.textContent = `Processing function ${current} of ${total}`;
+                        if (progressPct) progressPct.textContent = `${pct}%`;
+                        if (progressCurrentFn) {
+                            let fnDesc = "";
+                            if (prog.currentClass && prog.currentMethod) {
+                                fnDesc = `${prog.currentClass}#${prog.currentMethod}`;
+                            } else if (prog.currentClass) {
+                                fnDesc = prog.currentClass;
+                            } else if (prog.currentMethod) {
+                                fnDesc = prog.currentMethod;
+                            } else {
+                                fnDesc = "Analyzing bytecode...";
+                            }
+                            progressCurrentFn.textContent = fnDesc;
+                            progressCurrentFn.title = fnDesc;
+                        }
+                    }
+                })
+                .catch(() => {});
+        }, 150);
 
         const reader = new FileReader();
         reader.onload = function (e) {
@@ -132,6 +179,7 @@
             const payload = {
                 fileName: fileName,
                 fileBase64: fileBase64,
+                scanId: scanId,
                 options: {
                     enableLlm: toggleLlm.checked,
                     llmInvestigate: toggleInvestigate.checked,
@@ -149,6 +197,7 @@
                     return res.json();
                 })
                 .then(data => {
+                    clearInterval(pollInterval);
                     loadingOverlay.classList.add("hidden");
                     if (data.error) {
                         alert("Scan failed: " + data.error);
@@ -158,6 +207,7 @@
                     renderScanResult(data);
                 })
                 .catch(err => {
+                    clearInterval(pollInterval);
                     loadingOverlay.classList.add("hidden");
                     alert("Error during scan: " + err.message);
                 });

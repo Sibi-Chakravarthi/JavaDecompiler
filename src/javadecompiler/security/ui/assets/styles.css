@@ -632,9 +632,57 @@ body {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 12px;
-    padding: 32px 48px;
+    padding: 32px 40px;
     text-align: center;
     box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+    min-width: 380px;
+    max-width: 520px;
+    box-sizing: border-box;
+}
+
+.loading-progress-container {
+    margin-top: 20px;
+    width: 100%;
+}
+
+.loading-progress-bar-bg {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.loading-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #1f6feb, #2ea043);
+    transition: width 0.15s ease-out;
+    border-radius: 4px;
+}
+
+.loading-stats {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    font-variant-numeric: tabular-nums;
+}
+
+.loading-current-fn {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: #58a6ff;
+    background: rgba(56, 139, 253, 0.1);
+    border: 1px solid rgba(56, 139, 253, 0.2);
+    padding: 6px 12px;
+    border-radius: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .spinner {

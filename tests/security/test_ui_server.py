@@ -184,6 +184,50 @@ class TestUiServer(unittest.TestCase):
             urllib.request.urlopen(req)
         self.assertEqual(ctx.exception.code, 404)
 
+    def test_get_progress_idle(self):
+        req = urllib.request.Request(f"{self.base_url}/api/scan/progress?id=nonexistent_scan")
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(data["status"], "idle")
+            self.assertEqual(data["current"], 0)
+            self.assertEqual(data["total"], 0)
+
+    def test_scan_with_progress(self):
+        sample_path = COMPILED_DIR / "benign" / "MathUtils.class"
+        if not sample_path.exists():
+            self.skipTest(f"{sample_path} not found")
+
+        file_bytes = sample_path.read_bytes()
+        file_b64 = base64.b64encode(file_bytes).decode("ascii")
+
+        payload = {
+            "fileName": "MathUtils.class",
+            "fileBase64": file_b64,
+            "scanId": "test_active_scan_123",
+            "options": {"enableLlm": False},
+        }
+
+        req = urllib.request.Request(
+            f"{self.base_url}/api/scan",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            result = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(result["success"])
+
+        # Progress should now reflect complete
+        req_prog = urllib.request.Request(f"{self.base_url}/api/scan/progress?id=test_active_scan_123")
+        with urllib.request.urlopen(req_prog) as resp:
+            self.assertEqual(resp.status, 200)
+            prog_data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(prog_data["status"], "complete")
+            self.assertGreater(prog_data["total"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
