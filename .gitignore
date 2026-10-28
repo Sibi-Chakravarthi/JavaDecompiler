@@ -24,3 +24,8 @@ extractedClasses/
 .DS_Store
 
 cfg_maps/
+
+# Security Auditor Artifacts
+.javadecompiler_cache/
+eval_results/
+!tests/security_corpus/baseline_static.json

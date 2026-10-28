@@ -10,7 +10,7 @@ import argparse
 import os
 import sys
 import time
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 try:
     from javadecompiler.class_parser import ClassInfo, parseClassFile, parseJarFile
@@ -22,6 +22,8 @@ try:
         restoreClassSemantics,
     )
     from javadecompiler.report import generateHtmlReport
+    from javadecompiler.security.models import ScanResult, Verdict
+    from javadecompiler.security.scanner import SecurityScanner
 except ImportError:
     from class_parser import ClassInfo, parseClassFile, parseJarFile
     from lifter import liftMethod
@@ -32,6 +34,8 @@ except ImportError:
         restoreClassSemantics,
     )
     from report import generateHtmlReport
+    from security.models import ScanResult, Verdict
+    from security.scanner import SecurityScanner
 
 
 def print_banner() -> None:
@@ -48,16 +52,101 @@ def print_banner() -> None:
 
 
 def run_pipeline(
-    input_path: str,
+    input_path: Optional[str] = None,
     model: str = "qwen2.5-coder:14b",
     no_llm: bool = False,
     output_html: str = "",
     output_dir: str = "",
     verbose: bool = False,
+    security_scan: bool = False,
+    llm_audit: bool = False,
+    llm_scope: str = "suspicious",
+    llm_investigate: bool = False,
+    llm_votes: int = 1,
+    audit_model: str = "qwen2.5-coder:14b",
+    min_severity: str = "info",
+    fail_on: Optional[str] = None,
+    security_json: str = "",
+    security_sarif: str = "",
+    enable_rule: Optional[List[str]] = None,
+    disable_rule: Optional[List[str]] = None,
+    no_cache: bool = False,
+    refresh_cache: bool = False,
+    ui: bool = False,
+    port: int = 8080,
 ) -> int:
+    if ui:
+        try:
+            from javadecompiler.security.ui.server import start_ui_server
+            return start_ui_server(port=port)
+        except Exception as e:
+            print(f"[!] Error starting Web UI server: {e}")
+            return 1
+
+    if not input_path:
+        print("Error: Target input path required unless running with --ui.")
+        return 1
+
     if not os.path.exists(input_path):
         print(f"Error: Input file not found: {input_path}")
         return 1
+
+    # Security scan branch
+    if security_scan:
+        scanner = SecurityScanner(
+            enable_llm=llm_audit,
+            audit_model=audit_model,
+            llm_scope=llm_scope,
+            llm_investigate=llm_investigate,
+            llm_votes=llm_votes,
+            min_severity=min_severity,
+            enabled_rules=enable_rule,
+            disabled_rules=disable_rule,
+            no_cache=no_cache,
+            refresh_cache=refresh_cache,
+        )
+        print("\n" + "=" * 65)
+        print("[PHASE 4] Security Auditing & Behavioral Analysis")
+        print("=" * 65)
+        scan_result = scanner.scan_file(input_path)
+        print(f"[*] Target: {input_path}")
+        print(f"[+] Overall Verdict: {scan_result.overallVerdict}")
+        print(f"[+] Risk Score: {scan_result.overallRiskScore:.1f}/100")
+        if scan_result.topReasons:
+            print(f"[+] Top Reasons:")
+            for reason in scan_result.topReasons:
+                print(f"    - {reason}")
+
+        all_findings = scan_result.allFindings
+        print(f"[+] Total Findings: {len(all_findings)}")
+        for f in all_findings:
+            loc = f"{f.location.className}#{f.location.methodName}" if f.location.methodName else f.location.className
+            print(f"    [{f.severity.upper()}] {f.ruleId} ({loc}): {f.title}")
+
+        if security_json:
+            with open(security_json, "w", encoding="utf-8") as jf:
+                jf.write(scan_result.to_json())
+            print(f"[+] Saved Security JSON report to: {security_json}")
+
+        if security_sarif:
+            try:
+                from javadecompiler.security.reporting.sarif import to_sarif
+                sarif_json = to_sarif(scan_result)
+            except Exception:
+                sarif_json = "{}"
+            with open(security_sarif, "w", encoding="utf-8") as sf:
+                sf.write(sarif_json)
+            print(f"[+] Saved Security SARIF report to: {security_sarif}")
+
+        if fail_on:
+            sev_levels = {"info": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
+            thresh = sev_levels.get(fail_on.lower(), 3)
+            for f in all_findings:
+                if sev_levels.get(f.severity.lower(), 1) >= thresh:
+                    print(f"\n[!] Failure threshold '{fail_on}' reached by finding {f.ruleId} [{f.severity}].")
+                    return 2
+
+        return 0
 
     is_jar = input_path.endswith(".jar")
     print(f"\n[*] Target: {input_path} ({'JAR Archive' if is_jar else 'Single Class'})")
@@ -211,10 +300,12 @@ def run_pipeline(
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="javadecompiler",
-        description="NeuroDecomp: AI-Powered Java Bytecode Decompiler & Semantic Restorer",
+        description="NeuroDecomp: AI-Powered Java Bytecode Decompiler, Semantic Restorer & Security Auditor",
     )
     parser.add_argument(
         "input_path",
+        nargs="?",
+        default=None,
         help="Path to target .class file or .jar archive",
     )
     parser.add_argument(
@@ -245,7 +336,102 @@ def main() -> None:
         help="Enable detailed diagnostic logs",
     )
 
+    # Phase 4 Security Scanner Arguments
+    sec_group = parser.add_argument_group("Phase 4 Security Auditing Options")
+    sec_group.add_argument(
+        "--security-scan",
+        action="store_true",
+        help="Execute Phase 4 security audit and behavioral analysis",
+    )
+    sec_group.add_argument(
+        "--llm-audit",
+        action="store_true",
+        help="Layer LLM deep security auditing (qwen2.5-coder:14b) onto static findings",
+    )
+    sec_group.add_argument(
+        "--llm-scope",
+        choices=["suspicious", "all"],
+        default="suspicious",
+        help="Scope of methods to submit to LLM deep-dive audit (default: suspicious)",
+    )
+    sec_group.add_argument(
+        "--llm-investigate",
+        action="store_true",
+        help="Activate bounded agentic investigator loop for high-risk methods",
+    )
+    sec_group.add_argument(
+        "--llm-votes",
+        type=int,
+        default=1,
+        help="Number of adversarial verification voting rounds (default: 1)",
+    )
+    sec_group.add_argument(
+        "--audit-model",
+        default="qwen2.5-coder:14b",
+        help="LLM model name for security audit (default: qwen2.5-coder:14b)",
+    )
+    sec_group.add_argument(
+        "--min-severity",
+        choices=["info", "low", "medium", "high", "critical"],
+        default="info",
+        help="Minimum severity threshold for reporting findings (default: info)",
+    )
+    sec_group.add_argument(
+        "--fail-on",
+        choices=["low", "medium", "high", "critical"],
+        default=None,
+        help="Exit with status code 2 if any finding meets or exceeds this severity",
+    )
+    sec_group.add_argument(
+        "--security-json",
+        metavar="PATH.json",
+        default="",
+        help="Path to write structured JSON security audit report",
+    )
+    sec_group.add_argument(
+        "--security-sarif",
+        metavar="PATH.sarif",
+        default="",
+        help="Path to write SARIF 2.1.0 security audit report",
+    )
+    sec_group.add_argument(
+        "--enable-rule",
+        action="append",
+        default=[],
+        help="Enable specific rule ID (can be repeated)",
+    )
+    sec_group.add_argument(
+        "--disable-rule",
+        action="append",
+        default=[],
+        help="Disable specific rule ID (can be repeated)",
+    )
+    sec_group.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass LLM audit cache",
+    )
+    sec_group.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Force recomputation and refresh of LLM audit cache",
+    )
+    sec_group.add_argument(
+        "--ui",
+        action="store_true",
+        help="Launch the interactive Drag-and-Drop Web UI server",
+    )
+    sec_group.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port for Web UI server (default: 8080)",
+    )
+
     args = parser.parse_args()
+    if not args.ui and not args.input_path:
+        parser.error("the following arguments are required: input_path")
+
     print_banner()
     sys.exit(run_pipeline(
         input_path=args.input_path,
@@ -254,6 +440,22 @@ def main() -> None:
         output_html=args.output_html,
         output_dir=args.output_dir,
         verbose=args.verbose,
+        security_scan=args.security_scan,
+        llm_audit=args.llm_audit,
+        llm_scope=args.llm_scope,
+        llm_investigate=args.llm_investigate,
+        llm_votes=args.llm_votes,
+        audit_model=args.audit_model,
+        min_severity=args.min_severity,
+        fail_on=args.fail_on,
+        security_json=args.security_json,
+        security_sarif=args.security_sarif,
+        enable_rule=args.enable_rule,
+        disable_rule=args.disable_rule,
+        no_cache=args.no_cache,
+        refresh_cache=args.refresh_cache,
+        ui=args.ui,
+        port=args.port,
     ))
 
 
