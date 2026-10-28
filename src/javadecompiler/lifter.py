@@ -558,7 +558,14 @@ def liftMethod(
         from disassembler import disassembleMethod
     instructions = disassembleMethod(method_name, method_info.bytecode)
     cfg = buildControlFlowGraph(instructions)
-    tree = structureMethod(cfg)
+    try:
+        tree = structureMethod(cfg)
+    except Exception:
+        try:
+            from javadecompiler.structurer import BlockNode, SequenceNode
+        except ImportError:
+            from structurer import BlockNode, SequenceNode
+        tree = SequenceNode([BlockNode(b) for b in cfg.values()])
 
     context = LifterContext.create(class_info, method_info)
     simulator = StackSimulator(context)

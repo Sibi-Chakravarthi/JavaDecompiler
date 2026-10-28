@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
     from javadecompiler.cfg_builder import BasicBlock, resolveBranchTarget, switchMnemonics
@@ -77,7 +77,13 @@ def identifyLoops(blocks: Dict[int, BasicBlock], dominators: Dict[int, Set[int]]
 
     return loops
 
-def findMergePoint(blocks: Dict[int, BasicBlock], offsetA: int, offsetB: int) -> Optional[int]:
+def findMergePoint(
+    blocks: Dict[int, BasicBlock],
+    offsetA: int,
+    offsetB: int,
+    branchOffset: int = 0,
+    backEdges: Optional[Set[Tuple[int, int]]] = None,
+) -> Optional[int]:
     if offsetA == offsetB:
         return offsetA
 
@@ -85,37 +91,81 @@ def findMergePoint(blocks: Dict[int, BasicBlock], offsetA: int, offsetB: int) ->
     visitedB: Set[int] = {offsetB}
     frontierA: Set[int] = {offsetA}
     frontierB: Set[int] = {offsetB}
+    backEdges = backEdges or set()
 
-    common = visitedA & visitedB
-    if common:
-        return min(common)
+    common = (visitedA & visitedB)
+    valid_common = [c for c in common if c > branchOffset]
+    if valid_common:
+        return min(valid_common)
 
-    while frontierA or frontierB:
+    steps = 0
+    while (frontierA or frontierB) and steps < 100:
+        steps += 1
         if frontierA:
-            frontierA = {
-                successor
-                for node in frontierA
-                for successor in blocks[node].successors
-                if successor not in visitedA
-            }
-            visitedA |= frontierA
+            new_fA: Set[int] = set()
+            for node in frontierA:
+                if node not in blocks:
+                    continue
+                for successor in blocks[node].successors:
+                    if (node, successor) in backEdges or successor <= branchOffset:
+                        continue
+                    if successor not in visitedA:
+                        visitedA.add(successor)
+                        new_fA.add(successor)
+            frontierA = new_fA
             common = visitedA & visitedB
-            if common:
-                return min(common)
+            valid_common = [c for c in common if c > branchOffset]
+            if valid_common:
+                return min(valid_common)
 
         if frontierB:
-            frontierB = {
-                successor
-                for node in frontierB
-                for successor in blocks[node].successors
-                if successor not in visitedB
-            }
-            visitedB |= frontierB
+            new_fB: Set[int] = set()
+            for node in frontierB:
+                if node not in blocks:
+                    continue
+                for successor in blocks[node].successors:
+                    if (node, successor) in backEdges or successor <= branchOffset:
+                        continue
+                    if successor not in visitedB:
+                        visitedB.add(successor)
+                        new_fB.add(successor)
+            frontierB = new_fB
             common = visitedA & visitedB
-            if common:
-                return min(common)
+            valid_common = [c for c in common if c > branchOffset]
+            if valid_common:
+                return min(valid_common)
 
     return None
+
+
+def _isTerminatingPath(
+    blocks: Dict[int, BasicBlock],
+    startOffset: int,
+    backEdges: Set[Tuple[int, int]],
+    maxSteps: int = 15,
+) -> bool:
+    """Checks if path from startOffset only reaches terminal blocks without loops or escaping."""
+    visited: Set[int] = set()
+    frontier: Set[int] = {startOffset}
+    steps = 0
+    while frontier and steps < maxSteps:
+        steps += 1
+        new_frontier: Set[int] = set()
+        for node in frontier:
+            visited.add(node)
+            block = blocks.get(node)
+            if not block or not block.successors:
+                # Terminal block (e.g. return, athrow)
+                continue
+            for succ in block.successors:
+                if (node, succ) in backEdges:
+                    return False
+                if succ not in visited:
+                    new_frontier.add(succ)
+        frontier = new_frontier
+
+    return len(frontier) == 0
+
 
 @dataclass
 class BlockNode:
@@ -152,8 +202,19 @@ def structureRegion(
     stopOffset: Optional[int],
     loops: Dict[int, Dict[str, Any]],
     _callStack: Optional[Set[Any]] = None,
+    _depth: int = 0,
+    _budget: Optional[List[int]] = None,
+    backEdges: Optional[Set[Tuple[int, int]]] = None,
 ) -> Any:
-    
+    if _budget is None:
+        _budget = [1000]
+
+    if _budget[0] <= 0 or _depth > 30:
+        block = blocks.get(currentOffset) if currentOffset is not None else None
+        if block is not None:
+            return UnstructuredNode(block, "control-flow structuring complexity budget exceeded")
+        return SequenceNode([])
+
     if _callStack is None:
         _callStack = set()
 
@@ -172,10 +233,11 @@ def structureRegion(
     sequenceNodes: List[Any] = []
     visitedInThisRegion: Set[int] = set()
 
-    while currentOffset is not None and currentOffset != stopOffset:
+    while currentOffset is not None and currentOffset != stopOffset and _budget[0] > 0:
         if currentOffset in visitedInThisRegion:
             break 
         visitedInThisRegion.add(currentOffset)
+        _budget[0] -= 1
 
         block = blocks[currentOffset]
         lastMnemonic = block.instructions[-1]["mnemonic"] if block.instructions else ""
@@ -183,7 +245,10 @@ def structureRegion(
         if currentOffset in loops:
             loopInfo = loops[currentOffset]
             if loopInfo["bodyEntry"] is not None:
-                bodyNode = structureRegion(blocks, loopInfo["bodyEntry"], currentOffset, loops, _callStack)
+                bodyNode = structureRegion(
+                    blocks, loopInfo["bodyEntry"], currentOffset, loops, _callStack,
+                    _depth=_depth + 1, _budget=_budget, backEdges=backEdges
+                )
             else:
                 bodyNode = SequenceNode([])
             sequenceNodes.append(WhileLoopNode(conditionBlock=block, body=bodyNode))
@@ -201,14 +266,50 @@ def structureRegion(
             thenOffset = fallthroughOffsets[0] if fallthroughOffsets else sorted(block.successors)[0]
             elseOffset = branchTarget if branchTarget in block.successors else sorted(block.successors)[1]
 
-            mergeOffset = findMergePoint(blocks, thenOffset, elseOffset)
+            mergeOffset = findMergePoint(
+                blocks, thenOffset, elseOffset,
+                branchOffset=currentOffset, backEdges=backEdges
+            )
 
-            thenNode = structureRegion(blocks, thenOffset, mergeOffset, loops, _callStack)
-            elseNode = None if elseOffset == mergeOffset else structureRegion(blocks, elseOffset, mergeOffset, loops, _callStack)
+            if mergeOffset is not None:
+                thenNode = structureRegion(
+                    blocks, thenOffset, mergeOffset, loops, _callStack,
+                    _depth=_depth + 1, _budget=_budget, backEdges=backEdges
+                )
+                elseNode = None if elseOffset == mergeOffset else structureRegion(
+                    blocks, elseOffset, mergeOffset, loops, _callStack,
+                    _depth=_depth + 1, _budget=_budget, backEdges=backEdges
+                )
 
-            sequenceNodes.append(IfElseNode(conditionBlock=block, thenBranch=thenNode, elseBranch=elseNode))
-            currentOffset = mergeOffset
-            continue
+                sequenceNodes.append(IfElseNode(conditionBlock=block, thenBranch=thenNode, elseBranch=elseNode))
+                currentOffset = mergeOffset
+                continue
+            else:
+                # Early return guard pattern check: if one branch terminates early,
+                # the other branch is the linear continuation of the method!
+                thenTerm = _isTerminatingPath(blocks, thenOffset, backEdges or set())
+                elseTerm = _isTerminatingPath(blocks, elseOffset, backEdges or set())
+
+                if thenTerm and not elseTerm:
+                    thenNode = structureRegion(
+                        blocks, thenOffset, None, loops, _callStack,
+                        _depth=_depth + 1, _budget=_budget, backEdges=backEdges
+                    )
+                    sequenceNodes.append(IfElseNode(conditionBlock=block, thenBranch=thenNode, elseBranch=None))
+                    currentOffset = elseOffset
+                    continue
+                elif elseTerm and not thenTerm:
+                    elseNode = structureRegion(
+                        blocks, elseOffset, None, loops, _callStack,
+                        _depth=_depth + 1, _budget=_budget, backEdges=backEdges
+                    )
+                    sequenceNodes.append(IfElseNode(conditionBlock=block, thenBranch=None, elseBranch=elseNode))
+                    currentOffset = thenOffset
+                    continue
+                else:
+                    sequenceNodes.append(UnstructuredNode(block, "unmerged branch bifurcation"))
+                    currentOffset = None
+                    continue
 
         sequenceNodes.append(BlockNode(block))
         currentOffset = next(iter(block.successors)) if len(block.successors) == 1 else None
@@ -220,10 +321,21 @@ def structureRegion(
 
 def structureMethod(blocks: Dict[int, BasicBlock]) -> Any:
     """Entry point: builds the full structured tree for one method's CFG."""
+    if not blocks:
+        return SequenceNode([])
     entryOffset = min(blocks.keys())
     dominators = computeDominators(blocks, entryOffset)
     loops = identifyLoops(blocks, dominators)
-    return structureRegion(blocks, entryOffset, None, loops)
+
+    # Compute set of back-edges (node -> succ where succ dominates node)
+    backEdges: Set[Tuple[int, int]] = set()
+    for offset, block in blocks.items():
+        dom_set = dominators.get(offset, set())
+        for succ in block.successors:
+            if succ in dom_set:
+                backEdges.add((offset, succ))
+
+    return structureRegion(blocks, entryOffset, None, loops, backEdges=backEdges)
 
 def _formatInstruction(instruction: Dict[str, Any]) -> str:
     operandStr = " ".join(str(operand) for operand in instruction["operands"])

@@ -12,6 +12,7 @@ Endpoints:
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
 import json
 import os
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from javadecompiler.class_parser import ClassInfo, parseClassFile, parseJarFile
+from javadecompiler.security.jar_checks import inspect_jar_archive, safe_parse_class_bytes
 from javadecompiler.disassembler import disassembleMethod
 from javadecompiler.lifter import liftMethod
 from javadecompiler.report import generateHtmlReport
@@ -165,21 +167,34 @@ class UiServerHandler(BaseHTTPRequestHandler):
         try:
             target_path.write_bytes(file_bytes)
 
-            is_jar = file_name.endswith(".jar")
-            classes: List[ClassInfo] = []
-            if is_jar:
-                classes = parseJarFile(str(target_path))
-            else:
-                classes = [parseClassFile(str(target_path))]
-
-            # Run Security Scanner
+            # Run Security Scanner with single-pass archive extraction
             scanner = SecurityScanner(
                 enable_llm=enable_llm,
                 audit_model=audit_model,
                 llm_scope="suspicious",
                 llm_investigate=llm_investigate,
             )
-            scan_res: ScanResult = scanner.scan_file(str(target_path))
+
+            is_jar = file_name.endswith(".jar") or file_bytes.startswith(b"PK\x03\x04")
+            classes: List[ClassInfo] = []
+            jar_findings = []
+            raw_class_dict = {}
+
+            if is_jar:
+                classes, jar_findings, raw_class_dict = inspect_jar_archive(file_bytes, bounds=scanner.bounds)
+            else:
+                c_info, parse_findings = safe_parse_class_bytes(file_bytes, file_name)
+                jar_findings.extend(parse_findings)
+                if c_info:
+                    classes.append(c_info)
+
+            scan_res: ScanResult = scanner._scan_classes(
+                classes=classes,
+                file_name=file_name,
+                sha256=hashlib.sha256(file_bytes).hexdigest(),
+                jar_findings=jar_findings,
+                raw_class_dict=raw_class_dict,
+            )
 
             # Extract decompiled methods and bytecode from scan_res & classes
             raw_methods_dict: Dict[str, Dict[str, str]] = {}
