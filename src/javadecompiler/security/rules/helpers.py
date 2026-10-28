@@ -138,7 +138,13 @@ def find_matching_lines(
     matched: List[Tuple[int, str]] = []
     for line_idx, line in enumerate(lifted_lines, 1):
         for pat in patterns:
-            if pat in line or re.search(pat, line):
+            if pat in line:
                 matched.append((line_idx, line.strip()))
                 break
+            try:
+                if re.search(pat, line):
+                    matched.append((line_idx, line.strip()))
+                    break
+            except re.error:
+                pass
     return matched
