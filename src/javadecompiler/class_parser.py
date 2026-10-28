@@ -1,7 +1,29 @@
 import struct
 import zipfile
 import os
-from typing import Dict, Any
+from dataclasses import dataclass, field
+from typing import Dict, Any, List, Optional, Tuple
+
+@dataclass
+class MethodInfo:
+    name: str
+    descriptor: str
+    access_flags: int
+    bytecode: bytes
+    is_static: bool = False
+    param_types: List[str] = field(default_factory=list)
+    return_type: str = "void"
+
+@dataclass
+class ClassInfo:
+    class_name: str
+    super_class: str
+    interfaces: List[str]
+    major_version: int
+    minor_version: int
+    constant_pool: Dict[int, Any]
+    methods: Dict[str, MethodInfo]
+    fields: List[Dict[str, Any]] = field(default_factory=list)
 
 class ClassFileReader:
     def __init__(self, filePath : str) -> None:
@@ -94,17 +116,19 @@ def parseConstantPool(classReader: ClassFileReader, poolCount: int) -> Dict[int,
         if currentTag == tagUtf8:
             byteLength: int = classReader.readUnsignedShort()
             utf8Bytes: bytes = classReader.readRawBytes(byteLength)
-            constantPool[currentIndex] = {"type": "Utf8", "value":utf8Bytes.decode('utf-8', errors='replace')}
+            constantPool[currentIndex] = {"type": "Utf8", "value": utf8Bytes.decode('utf-8', errors='replace')}
 
         elif currentTag == tagClass:
             nameIndex: int = classReader.readUnsignedShort()
-            constantPool[currentIndex] = {"type":"Class", "nameIndex": nameIndex}
+            constantPool[currentIndex] = {"type": "Class", "nameIndex": nameIndex}
 
         elif currentTag in (tagFieldRef, tagMethodRef, tagInterfaceMethodRef):
             classIndex: int = classReader.readUnsignedShort()
             nameAndTypeIndex: int = classReader.readUnsignedShort()
+            refKind = "FieldRef" if currentTag == tagFieldRef else ("MethodRef" if currentTag == tagMethodRef else "InterfaceMethodRef")
             constantPool[currentIndex] = {
                 "type": "Ref",
+                "refKind": refKind,
                 "classIndex": classIndex,
                 "nameAndTypeIndex": nameAndTypeIndex
             }
@@ -154,7 +178,195 @@ def parseConstantPool(classReader: ClassFileReader, poolCount: int) -> Dict[int,
 
     return constantPool
 
-def extractAndParseJar(jarFilePath: str, targetClassFile: str) -> Dict[int, Dict[str, Any]]:
+def resolveUtf8(constantPool: Dict[int, Any], index: int) -> str:
+    entry = constantPool.get(index)
+    if entry and entry.get("type") == "Utf8":
+        return entry.get("value", "")
+    return ""
+
+def resolveClass(constantPool: Dict[int, Any], index: int) -> str:
+    entry = constantPool.get(index)
+    if entry and entry.get("type") == "Class":
+        return resolveUtf8(constantPool, entry.get("nameIndex", 0))
+    return ""
+
+def resolveNameAndType(constantPool: Dict[int, Any], index: int) -> Tuple[str, str]:
+    entry = constantPool.get(index)
+    if entry and entry.get("type") == "NameAndType":
+        name = resolveUtf8(constantPool, entry.get("nameIndex", 0))
+        descriptor = resolveUtf8(constantPool, entry.get("descriptorIndex", 0))
+        return name, descriptor
+    return "", ""
+
+def resolveRef(constantPool: Dict[int, Any], index: int) -> Dict[str, str]:
+    entry = constantPool.get(index)
+    if entry and entry.get("type") == "Ref":
+        className = resolveClass(constantPool, entry.get("classIndex", 0))
+        name, descriptor = resolveNameAndType(constantPool, entry.get("nameAndTypeIndex", 0))
+        return {
+            "kind": entry.get("refKind", "Ref"),
+            "class": className,
+            "name": name,
+            "descriptor": descriptor
+        }
+    return {"kind": "Unknown", "class": "", "name": "", "descriptor": ""}
+
+def resolveString(constantPool: Dict[int, Any], index: int) -> str:
+    entry = constantPool.get(index)
+    if entry and entry.get("type") == "String":
+        return resolveUtf8(constantPool, entry.get("stringIndex", 0))
+    return ""
+
+def parseDescriptor(descriptor: str) -> Tuple[List[str], str]:
+    """Parses a method descriptor like '(Ljava/lang/String;I)V' into ([param_types], return_type)."""
+    if not descriptor or not descriptor.startswith("("):
+        return [], "void"
+    
+    endParen = descriptor.find(")")
+    if endParen == -1:
+        return [], "void"
+        
+    paramStr = descriptor[1:endParen]
+    retStr = descriptor[endParen + 1:]
+    
+    typeMap = {
+        'B': 'byte',
+        'C': 'char',
+        'D': 'double',
+        'F': 'float',
+        'I': 'int',
+        'J': 'long',
+        'S': 'short',
+        'Z': 'boolean',
+        'V': 'void'
+    }
+    
+    def decodeType(s: str) -> Tuple[str, str]:
+        if not s:
+            return "", ""
+        if s[0] == '[':
+            subType, remainder = decodeType(s[1:])
+            return f"{subType}[]", remainder
+        if s[0] == 'L':
+            semicolon = s.find(';')
+            if semicolon != -1:
+                rawClass = s[1:semicolon].replace('/', '.')
+                simpleClass = rawClass.split('.')[-1]
+                return simpleClass, s[semicolon + 1:]
+            return s[1:], ""
+        if s[0] in typeMap:
+            return typeMap[s[0]], s[1:]
+        return s[0], s[1:]
+
+    params: List[str] = []
+    rem = paramStr
+    while rem:
+        pType, rem = decodeType(rem)
+        if pType:
+            params.append(pType)
+        else:
+            break
+            
+    retType, _ = decodeType(retStr)
+    return params, retType or "void"
+
+def parseClassInfo(classReader: ClassFileReader) -> ClassInfo:
+    """Parses all class metadata, constant pool, fields, and methods into a ClassInfo object."""
+    magicNumber: int = classReader.readUnsignedInt()
+    if magicNumber != 0xCAFEBABE:
+        raise ValueError(f"Invalid class file: Expected magic number 0xCAFEBABE, found {hex(magicNumber)}")
+
+    minorVersion: int = classReader.readUnsignedShort()
+    majorVersion: int = classReader.readUnsignedShort()
+    constantPoolCount: int = classReader.readUnsignedShort()
+    constantPoolDict: Dict[int, Any] = parseConstantPool(classReader, constantPoolCount)
+
+    accessFlags: int = classReader.readUnsignedShort()
+    thisClassIndex: int = classReader.readUnsignedShort()
+    superClassIndex: int = classReader.readUnsignedShort()
+    thisClassName = resolveClass(constantPoolDict, thisClassIndex)
+    superClassName = resolveClass(constantPoolDict, superClassIndex)
+
+    interfacesCount: int = classReader.readUnsignedShort()
+    interfaces: List[str] = []
+    for _ in range(interfacesCount):
+        ifaceIndex = classReader.readUnsignedShort()
+        interfaces.append(resolveClass(constantPoolDict, ifaceIndex))
+
+    # Parse fields
+    fieldsCount: int = classReader.readUnsignedShort()
+    fields: List[Dict[str, Any]] = []
+    for _ in range(fieldsCount):
+        fAccess = classReader.readUnsignedShort()
+        fNameIdx = classReader.readUnsignedShort()
+        fDescIdx = classReader.readUnsignedShort()
+        fName = resolveUtf8(constantPoolDict, fNameIdx)
+        fDesc = resolveUtf8(constantPoolDict, fDescIdx)
+        
+        fAttrCount = classReader.readUnsignedShort()
+        for _ in range(fAttrCount):
+            classReader.readUnsignedShort()
+            attrLen = classReader.readUnsignedInt()
+            classReader.readRawBytes(attrLen)
+            
+        fields.append({"name": fName, "descriptor": fDesc, "accessFlags": fAccess})
+
+    # Parse methods
+    methodsCount: int = classReader.readUnsignedShort()
+    methods: Dict[str, MethodInfo] = {}
+
+    for _ in range(methodsCount):
+        mAccess = classReader.readUnsignedShort()
+        nameIndex: int = classReader.readUnsignedShort()
+        descriptorIndex: int = classReader.readUnsignedShort()
+        
+        methodName: str = resolveUtf8(constantPoolDict, nameIndex) or f"UnknownMethod_{nameIndex}"
+        descriptor: str = resolveUtf8(constantPoolDict, descriptorIndex)
+        paramTypes, returnType = parseDescriptor(descriptor)
+        isStatic = bool(mAccess & 0x0008)
+
+        attributesCount: int = classReader.readUnsignedShort()
+        bytecode: bytes = b""
+
+        for _ in range(attributesCount):
+            attributeNameIndex: int = classReader.readUnsignedShort()
+            attributeLength: int = classReader.readUnsignedInt()
+            attributePayload: bytes = classReader.readRawBytes(attributeLength)
+            attributeName: str = resolveUtf8(constantPoolDict, attributeNameIndex)
+
+            if attributeName == "Code":
+                codeLength: int = struct.unpack_from('>I', attributePayload, 4)[0]
+                bytecode = attributePayload[8 : 8 + codeLength]
+
+        methods[methodName] = MethodInfo(
+            name=methodName,
+            descriptor=descriptor,
+            access_flags=mAccess,
+            bytecode=bytecode,
+            is_static=isStatic,
+            param_types=paramTypes,
+            return_type=returnType
+        )
+
+    return ClassInfo(
+        class_name=thisClassName,
+        super_class=superClassName,
+        interfaces=interfaces,
+        major_version=majorVersion,
+        minor_version=minorVersion,
+        constant_pool=constantPoolDict,
+        methods=methods,
+        fields=fields
+    )
+
+def parseClassFile(classFilePath: str) -> ClassInfo:
+    """Parses a standalone .class file returning full ClassInfo (CP + Methods + Metadata)."""
+    if not os.path.isfile(classFilePath):
+        raise FileNotFoundError(f"Class file not found: {classFilePath}")
+    reader = ClassFileReader(classFilePath)
+    return parseClassInfo(reader)
+
+def extractAndParseJar(jarFilePath: str, targetClassFile: str) -> Dict[str, bytes]:
     if not os.path.isfile(jarFilePath):
         raise FileNotFoundError(f"JAR file not found: {jarFilePath}")
 
@@ -186,6 +398,24 @@ def extractAndParseJar(jarFilePath: str, targetClassFile: str) -> Dict[int, Dict
     finally:
         if os.path.exists(extractedFilePath):
             os.remove(extractedFilePath)
+
+def parseJarFile(jarFilePath: str) -> List[ClassInfo]:
+    """Unpacks a JAR archive and parses all .class files into ClassInfo objects."""
+    if not os.path.isfile(jarFilePath):
+        raise FileNotFoundError(f"JAR file not found: {jarFilePath}")
+
+    classes: List[ClassInfo] = []
+    with zipfile.ZipFile(jarFilePath, "r") as jarArchive:
+        for member in jarArchive.namelist():
+            if member.endswith(".class") and not member.startswith("__MACOSX"):
+                classBytes = jarArchive.read(member)
+                classReader = ClassFileReader.__new__(ClassFileReader)
+                classReader.fileData = classBytes
+                classReader.currentCursor = 0
+                classReader.fileLength = len(classBytes)
+                info = parseClassInfo(classReader)
+                classes.append(info)
+    return classes
 
 def skipClassMetadataAndInterfaces(classReader: ClassFileReader) -> None:
     classReader.readUnsignedShort()
@@ -230,17 +460,14 @@ def extractMethodBytecode(classReader: ClassFileReader, constantPool: Dict[int, 
             attributeName: str = constantPool[attributeNameIndex].get("value", "")
 
             if attributeName == "Code":
-
-                import struct
                 codeLength: int = struct.unpack_from('>I', attributePayload, 4)[0]
-
                 rawInstructions: bytes = attributePayload[8 : 8 + codeLength]
                 extractedMethods[methodName] = rawInstructions
 
     return extractedMethods
 
 def parseClassDirectly(classFilePath: str) -> Dict[str, bytes]:
-    """Parses a standalone .class file directly from disk."""
+    """Parses a standalone .class file directly from disk returning method name -> bytecode."""
     if not os.path.isfile(classFilePath):
         raise FileNotFoundError(f"Class file not found: {classFilePath}")
 

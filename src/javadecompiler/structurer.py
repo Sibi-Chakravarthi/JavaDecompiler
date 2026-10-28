@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from cfg_builder import BasicBlock, resolveBranchTarget, switchMnemonics
+try:
+    from javadecompiler.cfg_builder import BasicBlock, resolveBranchTarget, switchMnemonics
+except ImportError:
+    from cfg_builder import BasicBlock, resolveBranchTarget, switchMnemonics
 
 def computeDominators(blocks: Dict[int, BasicBlock], entryOffset: int) -> Dict[int, Set[int]]:
     allOffsets: List[int] = list(blocks.keys())
