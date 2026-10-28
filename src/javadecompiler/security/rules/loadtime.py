@@ -4,10 +4,11 @@ loadtime.py — Load-time trigger rules (<clinit>, Java Agent, ServiceLoader rea
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from javadecompiler.class_parser import ClassInfo, MethodInfo
-from javadecompiler.security.callgraph import CallGraph
+if TYPE_CHECKING:
+    from javadecompiler.security.callgraph import CallGraph
 from javadecompiler.security.models import (
     Category,
     Evidence,
@@ -116,7 +117,7 @@ class LoadTimeTriggerRule(SecurityRule):
                 )
 
         # 2. Transitive reachability via CallGraph
-        if call_graph and isinstance(call_graph, CallGraph):
+        if call_graph and hasattr(call_graph, "find_path"):
             for sink_cls, sink_m in DANGEROUS_SINKS:
                 path = call_graph.find_path((class_info.class_name.replace(".", "/"), "<clinit>"), (sink_cls, sink_m))
                 if path and len(path) > 2:  # Transitive call (len > 2 means clinit -> helper -> sink)
