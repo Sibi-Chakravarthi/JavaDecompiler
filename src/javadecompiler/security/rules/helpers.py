@@ -109,18 +109,24 @@ def get_new_class(
 
 
 def get_all_cp_strings(constant_pool: Dict[int, Any]) -> List[Tuple[int, str]]:
-    """Extracts all string and Utf8 constants from constant pool."""
+    """Extracts string constants from constant pool without duplicate Utf8 references."""
     results: List[Tuple[int, str]] = []
+    utf8_referenced = set()
     for idx, entry in constant_pool.items():
-        t = entry.get("type")
-        if t == "String":
+        if entry.get("type") == "String":
+            s_idx = entry.get("stringIndex", entry.get("string_index", 0))
+            if s_idx:
+                utf8_referenced.add(s_idx)
             val = resolveString(constant_pool, idx)
-            if val is not None:
+            if val:
                 results.append((idx, val))
-        elif t == "Utf8":
+
+    for idx, entry in constant_pool.items():
+        if entry.get("type") == "Utf8" and idx not in utf8_referenced:
             val = entry.get("value", "")
             if val:
                 results.append((idx, val))
+
     return results
 
 

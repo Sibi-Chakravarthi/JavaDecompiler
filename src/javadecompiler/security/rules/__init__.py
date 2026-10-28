@@ -17,6 +17,13 @@ import javadecompiler.security.rules.dynamic
 import javadecompiler.security.rules.deserialization
 import javadecompiler.security.rules.crypto
 
+# Milestone 4 static rule families
+import javadecompiler.security.rules.injection
+import javadecompiler.security.rules.secrets
+import javadecompiler.security.rules.evasion
+import javadecompiler.security.rules.system
+import javadecompiler.security.rules.loadtime
+
 __all__ = [
     "SecurityRule",
     "register_rule",
