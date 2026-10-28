@@ -1,3 +1,4 @@
+import struct
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
@@ -17,21 +18,25 @@ switchMnemonics: Set[str] = {"tableswitch", "lookupswitch"}
 branchMnemonics: Set[str] = conditionalJumpMnemonics | unconditionalJumpMnemonics
 terminatorMnemonics: Set[str] = branchMnemonics | returnMnemonics | throwMnemonics | switchMnemonics
 
+
 def resolveBranchTarget(instruction: Dict[str, Any]) -> Optional[int]:
+    """Resolves branch target offset from decoded instruction or raw operands."""
+    if "target" in instruction and instruction["target"] is not None:
+        return instruction["target"]
+
     mnemonic: str = instruction["mnemonic"]
     if mnemonic not in conditionalJumpMnemonics and mnemonic not in unconditionalJumpMnemonics:
         return None
 
     operands: List[int] = instruction["operands"]
-    if len(operands) != 2:
-        return None
+    if len(operands) == 4:
+        rawOffset = struct.unpack(">i", bytes(operands))[0]
+        return instruction["offset"] + rawOffset
+    elif len(operands) == 2:
+        rawOffset = struct.unpack(">h", bytes(operands))[0]
+        return instruction["offset"] + rawOffset
 
-    highByte, lowByte = operands
-    rawOffset: int = (highByte << 8) | lowByte
-    if rawOffset >= 0x8000:
-        rawOffset -= 0x10000
-
-    return instruction["offset"] + rawOffset
+    return None
 
 
 def fallsThrough(mnemonic: str) -> bool:
@@ -44,6 +49,7 @@ def fallsThrough(mnemonic: str) -> bool:
     if mnemonic in switchMnemonics:
         return False
     return True
+
 
 @dataclass
 class BasicBlock:
@@ -64,10 +70,15 @@ class BasicBlock:
         mnemonics = ", ".join(instr["mnemonic"] for instr in self.instructions)
         return f"BasicBlock(start={self.startOffset}, [{mnemonics}], -> {sorted(self.successors)})"
 
-def findLeaders(instructions: List[Dict[str, Any]]) -> Set[int]:
+
+def findLeaders(
+    instructions: List[Dict[str, Any]],
+    exception_handlers: Optional[List[Dict[str, int]]] = None,
+) -> Set[int]:
     if not instructions:
         return set()
 
+    instruction_offsets: Set[int] = {instr["offset"] for instr in instructions}
     leaders: Set[int] = {instructions[0]["offset"]}
 
     for index, instruction in enumerate(instructions):
@@ -75,18 +86,33 @@ def findLeaders(instructions: List[Dict[str, Any]]) -> Set[int]:
 
         if mnemonic in branchMnemonics:
             target = resolveBranchTarget(instruction)
-            if target is not None:
+            if target is not None and target in instruction_offsets:
                 leaders.add(target)
 
         if mnemonic in switchMnemonics:
             default_target = instruction.get("defaultTarget")
-            if default_target is not None:
+            if default_target is not None and default_target in instruction_offsets:
                 leaders.add(default_target)
             for t in instruction.get("targets", []):
-                leaders.add(t)
+                if t in instruction_offsets:
+                    leaders.add(t)
 
         if mnemonic in terminatorMnemonics and index + 1 < len(instructions):
             leaders.add(instructions[index + 1]["offset"])
+
+    # Include exception handler entry points and protected ranges as leaders
+    if exception_handlers:
+        for handler in exception_handlers:
+            start_pc = handler.get("start_pc")
+            end_pc = handler.get("end_pc")
+            handler_pc = handler.get("handler_pc")
+
+            if start_pc is not None and start_pc in instruction_offsets:
+                leaders.add(start_pc)
+            if end_pc is not None and end_pc in instruction_offsets:
+                leaders.add(end_pc)
+            if handler_pc is not None and handler_pc in instruction_offsets:
+                leaders.add(handler_pc)
 
     return leaders
 
@@ -96,22 +122,28 @@ def splitIntoBlocks(instructions: List[Dict[str, Any]], leaders: Set[int]) -> Di
     if not instructions:
         return blocks
 
-    sortedLeaders: List[int] = sorted(leaders)
     currentBlock: Optional[BasicBlock] = None
 
     for instruction in instructions:
         if instruction["offset"] in leaders:
             currentBlock = BasicBlock(startOffset=instruction["offset"])
             blocks[currentBlock.startOffset] = currentBlock
-        currentBlock.instructions.append(instruction)
+        if currentBlock is not None:
+            currentBlock.instructions.append(instruction)
 
     return blocks
 
-def wireEdges(blocks: Dict[int, BasicBlock]) -> None:
+
+def wireEdges(
+    blocks: Dict[int, BasicBlock],
+    exception_handlers: Optional[List[Dict[str, int]]] = None,
+) -> None:
     sortedStarts: List[int] = sorted(blocks.keys())
 
     for position, startOffset in enumerate(sortedStarts):
         block = blocks[startOffset]
+        if not block.instructions:
+            continue
         lastInstruction = block.instructions[-1]
         mnemonic: str = lastInstruction["mnemonic"]
 
@@ -136,14 +168,31 @@ def wireEdges(blocks: Dict[int, BasicBlock]) -> None:
         if fallsThrough(mnemonic) and position + 1 < len(sortedStarts):
             block.successors.add(sortedStarts[position + 1])
 
+    # Wire exception handler edges from protected blocks to catch handler entry blocks
+    if exception_handlers:
+        for handler in exception_handlers:
+            start_pc = handler.get("start_pc", 0)
+            end_pc = handler.get("end_pc", 0)
+            handler_pc = handler.get("handler_pc")
+
+            if handler_pc is not None and handler_pc in blocks:
+                for startOffset, block in blocks.items():
+                    if start_pc <= startOffset < end_pc:
+                        block.successors.add(handler_pc)
+
     for block in blocks.values():
         for successorOffset in block.successors:
-            blocks[successorOffset].predecessors.add(block.startOffset)
+            if successorOffset in blocks:
+                blocks[successorOffset].predecessors.add(block.startOffset)
 
-def buildControlFlowGraph(instructions: List[Dict[str, Any]]) -> Dict[int, BasicBlock]:
-    leaders = findLeaders(instructions)
+
+def buildControlFlowGraph(
+    instructions: List[Dict[str, Any]],
+    exception_handlers: Optional[List[Dict[str, int]]] = None,
+) -> Dict[int, BasicBlock]:
+    leaders = findLeaders(instructions, exception_handlers)
     blocks = splitIntoBlocks(instructions, leaders)
-    wireEdges(blocks)
+    wireEdges(blocks, exception_handlers)
     return blocks
 
 
