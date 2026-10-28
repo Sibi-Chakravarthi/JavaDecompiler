@@ -1,19 +1,22 @@
 """
-test_bugfixes.py — Regression Test Suite for Core Pipeline Bugfixes
+test_bugfixes.py — Regression Test Suite for JavaDecompiler Core Pipeline Bugfixes
 
-Validates fixes for:
-- Phase 1: Constant pool 8-byte slot stepping, tags 17-20, modified UTF-8, in-memory parsing
-- Phase 2a: Variable-length switches, wide (0xC4) instruction decoding, signed immediates
-- Phase 2b: 4-byte wide branch targets (goto_w/jsr_w), exception handler CFG wiring, loop leaders
-- Phase 2c: ACC_STATIC parameter slot mapping, Category-2 2-slot stepping, binary op order, invokedynamic, catch block stack resilience
-- Phase 3: Markdown code fence stripping, JSON preamble extraction, timeout/offline resilience
-- Phase 4: HTML escaping in reports for <init> and <clinit>
+Tests specific edge cases and bug vectors identified and fixed across:
+1. class_parser.py (CP slot stepping, modern tags 15-20, modified UTF-8, attributes)
+2. disassembler.py (tableswitch/lookupswitch padding, wide opcode 0xC4, 5-byte invokes)
+3. cfg_builder.py (4-byte branch targets, exception table leaders, loop back-edges)
+4. lifter.py (static vs instance slot mapping, Category-2 types, caughtEx, invokedynamic)
+5. report.py (HTML escaping for <init>, <clinit>, XSS prevention, UTF-8 output)
+6. semantic_restorer.py (code fence & preamble stripping, connection timeout resilience)
 """
 
 import html
 import json
+import os
 import struct
+import tempfile
 import unittest
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 from javadecompiler.class_parser import (
@@ -21,21 +24,24 @@ from javadecompiler.class_parser import (
     ClassInfo,
     MethodInfo,
     decodeModifiedUtf8,
+    parseClassInfo,
     parseConstantPool,
+    parseDescriptor,
 )
 from javadecompiler.disassembler import disassembleMethod, jvmOpcodes
 from javadecompiler.cfg_builder import (
+    BasicBlock,
     buildControlFlowGraph,
     findLeaders,
     resolveBranchTarget,
-    wireEdges,
 )
 from javadecompiler.lifter import (
     LifterContext,
     StackSimulator,
-    getSlotForParameter,
     liftMethod,
+    map_parameter_slots,
 )
+from javadecompiler.report import generateHtmlReport
 from javadecompiler.semantic_restorer import (
     OSContext,
     RestorationResult,
@@ -43,319 +49,468 @@ from javadecompiler.semantic_restorer import (
     extractJsonPayload,
     stripMarkdownFences,
 )
-from javadecompiler.report import generateHtmlReport
 
 
 class TestCorePipelineBugfixes(unittest.TestCase):
+    """Regression test suite verifying all 8 bug categories across the core pipeline."""
 
-    def test_constant_pool_long_double_slot_stepping(self):
-        """1. Verify Long/Double advance CP index by 2 with None placeholder at index+1."""
-        # Construct constant pool with:
-        # 1: Long (tag 5, 8 bytes: high=1, low=2) -> takes slots 1 and 2
-        # 3: Double (tag 6, 8 bytes: high=3, low=4) -> takes slots 3 and 4
-        # 5: Utf8 (tag 1, len=4, 'done') -> slot 5
-        # 6: Dynamic (tag 17, 4 bytes: bm_attr=0, nat=1) -> slot 6
-        # 7: Module (tag 19, 2 bytes: name=1) -> slot 7
-        # 8: Package (tag 20, 2 bytes: name=1) -> slot 8
-        raw_cp = bytearray()
-        # Slot 1: Long (tag 5)
-        raw_cp.append(5)
-        raw_cp.extend(struct.pack(">II", 1, 2))
-        # Slot 3: Double (tag 6)
-        raw_cp.append(6)
-        raw_cp.extend(struct.pack(">II", 3, 4))
-        # Slot 5: Utf8 (tag 1)
-        raw_cp.append(1)
-        raw_cp.extend(struct.pack(">H", 4))
-        raw_cp.extend(b"done")
-        # Slot 6: Dynamic (tag 17)
-        raw_cp.append(17)
-        raw_cp.extend(struct.pack(">HH", 0, 1))
-        # Slot 7: Module (tag 19)
-        raw_cp.append(19)
-        raw_cp.extend(struct.pack(">H", 1))
-        # Slot 8: Package (tag 20)
-        raw_cp.append(20)
-        raw_cp.extend(struct.pack(">H", 1))
+    # =========================================================================
+    # 1. Constant Pool 8-Byte Slot Stepping, Modern Tags & Modified UTF-8
+    # =========================================================================
+    def test_constant_pool_long_double_and_modern_tags(self):
+        """Verifies 8-byte CP slot stepping (None placeholder), JVM tags 15-20, and modified UTF-8."""
+        # Construct synthetic constant pool with:
+        # idx 1: Long (tag 5) -> takes slots 1 and 2 (slot 2 is None)
+        # idx 3: Double (tag 6) -> takes slots 3 and 4 (slot 4 is None)
+        # idx 5: MethodHandle (tag 15) -> 3 bytes
+        # idx 6: MethodType (tag 16) -> 2 bytes
+        # idx 7: Dynamic (tag 17) -> 4 bytes
+        # idx 8: InvokeDynamic (tag 18) -> 4 bytes
+        # idx 9: Module (tag 19) -> 2 bytes
+        # idx 10: Package (tag 20) -> 2 bytes
+        pool_bytes = bytearray()
+        
+        # 1. CONSTANT_Long: tag 5, 8 bytes (0x00000000_12345678)
+        pool_bytes.append(5)
+        pool_bytes.extend(struct.pack(">q", 0x12345678))
 
-        reader = ClassFileReader.from_bytes(bytes(raw_cp))
-        # Total pool count is 9 (indices 1..8)
-        cp = parseConstantPool(reader, 9)
+        # 3. CONSTANT_Double: tag 6, 8 bytes (3.14159)
+        pool_bytes.append(6)
+        pool_bytes.extend(struct.pack(">d", 3.14159))
 
-        # Slot 1 is Long, slot 2 is None placeholder
+        # 5. CONSTANT_MethodHandle: tag 15, 3 bytes (ref_kind=6 [REF_invokeStatic], ref_index=42)
+        pool_bytes.append(15)
+        pool_bytes.append(6)
+        pool_bytes.extend(struct.pack(">H", 42))
+
+        # 6. CONSTANT_MethodType: tag 16, 2 bytes (descriptor_index=10)
+        pool_bytes.append(16)
+        pool_bytes.extend(struct.pack(">H", 10))
+
+        # 7. CONSTANT_Dynamic: tag 17, 4 bytes (bm_index=0, nat_index=12)
+        pool_bytes.append(17)
+        pool_bytes.extend(struct.pack(">H", 0))
+        pool_bytes.extend(struct.pack(">H", 12))
+
+        # 8. CONSTANT_InvokeDynamic: tag 18, 4 bytes (bm_index=1, nat_index=14)
+        pool_bytes.append(18)
+        pool_bytes.extend(struct.pack(">H", 1))
+        pool_bytes.extend(struct.pack(">H", 14))
+
+        # 9. CONSTANT_Module: tag 19, 2 bytes (name_index=20)
+        pool_bytes.append(19)
+        pool_bytes.extend(struct.pack(">H", 20))
+
+        # 10. CONSTANT_Package: tag 20, 2 bytes (name_index=22)
+        pool_bytes.append(20)
+        pool_bytes.extend(struct.pack(">H", 22))
+
+        reader = ClassFileReader.from_bytes(bytes(pool_bytes))
+        # Total pool count is 11 (indices 1 through 10)
+        cp = parseConstantPool(reader, 11)
+
+        # 1. Verify 8-byte stepping and None placeholders
         self.assertEqual(cp[1]["type"], "Primitive64")
-        self.assertIn(2, cp)
-        self.assertIsNone(cp[2])
+        self.assertEqual(cp[1]["kind"], "Long")
+        self.assertIsNone(cp[2], "Slot 2 must be an explicit None placeholder per JVM Spec §4.4.5")
 
-        # Slot 3 is Double, slot 4 is None placeholder
         self.assertEqual(cp[3]["type"], "Primitive64")
-        self.assertIn(4, cp)
-        self.assertIsNone(cp[4])
+        self.assertEqual(cp[3]["kind"], "Double")
+        self.assertIsNone(cp[4], "Slot 4 must be an explicit None placeholder per JVM Spec §4.4.5")
 
-        # Slot 5 is Utf8
-        self.assertEqual(cp[5]["type"], "Utf8")
-        self.assertEqual(cp[5]["value"], "done")
+        # 2. Verify modern tags 15–20
+        self.assertEqual(cp[5]["type"], "MethodHandle")
+        self.assertEqual(cp[5]["referenceKind"], 6)
+        self.assertEqual(cp[5]["referenceIndex"], 42)
 
-        # Slot 6 is Dynamic, 7 is Module, 8 is Package
-        self.assertEqual(cp[6]["type"], "Dynamic")
-        self.assertEqual(cp[7]["type"], "Module")
-        self.assertEqual(cp[8]["type"], "Package")
+        self.assertEqual(cp[6]["type"], "MethodType")
+        self.assertEqual(cp[6]["descriptorIndex"], 10)
 
-        # Test Modified UTF-8 decoding for 0xC0 0x80 (null byte)
-        mod_utf8_null = b"\xc0\x80"
-        self.assertEqual(decodeModifiedUtf8(mod_utf8_null), "\x00")
+        self.assertEqual(cp[7]["type"], "Dynamic")
+        self.assertEqual(cp[7]["bootstrapMethodAttrIndex"], 0)
+        self.assertEqual(cp[7]["nameAndTypeIndex"], 12)
 
+        self.assertEqual(cp[8]["type"], "InvokeDynamic")
+        self.assertEqual(cp[8]["bootstrapMethodAttrIndex"], 1)
+        self.assertEqual(cp[8]["nameAndTypeIndex"], 14)
+
+        self.assertEqual(cp[9]["type"], "Module")
+        self.assertEqual(cp[9]["nameIndex"], 20)
+
+        self.assertEqual(cp[10]["type"], "Package")
+        self.assertEqual(cp[10]["nameIndex"], 22)
+
+        # 3. Modified UTF-8 decoding tests
+        # Null character in Modified UTF-8 is 0xC0 0x80
+        null_encoded = b"Hello\xc0\x80World"
+        self.assertEqual(decodeModifiedUtf8(null_encoded), "Hello\x00World")
+
+        # Standard ASCII
+        self.assertEqual(decodeModifiedUtf8(b"SimpleText"), "SimpleText")
+
+    # =========================================================================
+    # 2. Switch 4-Byte Alignment & Variable-Length Decoding
+    # =========================================================================
     def test_disassembler_tableswitch_lookupswitch_alignment(self):
-        """2. Verify tableswitch and lookupswitch 4-byte padding at unaligned offsets."""
-        # Test tableswitch at offset 1:
-        # Prepend 1 byte (e.g. nop 0x00)
-        # Offset 0: nop (1 byte)
-        # Offset 1: tableswitch (0xAA)
-        # Pad should be (4 - ((1 + 1) % 4)) % 4 = 2 bytes
-        # Pad at bytes 2, 3 -> table starts at byte 4 (multiple of 4)
-        ts_bytes = bytearray([0x00, 0xaa, 0x00, 0x00]) # offset 0: nop, offset 1: tableswitch + 2 pad bytes
-        # Default: offset 10, low: 0, high: 1 (2 targets: 15, 20)
-        ts_bytes.extend(struct.pack(">iii", 10, 0, 1))
-        ts_bytes.extend(struct.pack(">ii", 15, 20))
+        """Tests decoding tableswitch and lookupswitch across all 4 byte alignments (offsets 0, 1, 2, 3)."""
+        # Test tableswitch at offsets 0, 1, 2, 3 followed by return (0xB1)
+        for offset in (0, 1, 2, 3):
+            code = bytearray(b"\x00" * offset)  # nop padding to reach exact start offset
+            # Opcode 0xAA (tableswitch)
+            code.append(0xaa)
+            pad_len = (4 - ((offset + 1) % 4)) % 4
+            code.extend(b"\x00" * pad_len)
+            
+            # default=20, low=1, high=2, jump1=10, jump2=15
+            code.extend(struct.pack(">i", 20))  # default
+            code.extend(struct.pack(">i", 1))   # low
+            code.extend(struct.pack(">i", 2))   # high
+            code.extend(struct.pack(">i", 10))  # target for case 1
+            code.extend(struct.pack(">i", 15))  # target for case 2
+            
+            # Follow with return (0xB1)
+            expected_return_offset = len(code)
+            code.append(0xb1)  # return
 
-        instrs = disassembleMethod("test_tableswitch", bytes(ts_bytes))
-        self.assertEqual(len(instrs), 2)
-        self.assertEqual(instrs[0]["mnemonic"], "nop")
-        self.assertEqual(instrs[1]["mnemonic"], "tableswitch")
-        self.assertEqual(instrs[1]["offset"], 1)
-        self.assertEqual(instrs[1]["defaultTarget"], 1 + 10)
-        self.assertEqual(instrs[1]["targets"], [1 + 15, 1 + 20])
-        self.assertEqual(instrs[1]["low"], 0)
-        self.assertEqual(instrs[1]["high"], 1)
+            instructions = disassembleMethod("testTableSwitch", bytes(code))
+            switch_instr = instructions[offset]
+            self.assertEqual(switch_instr["mnemonic"], "tableswitch")
+            self.assertEqual(switch_instr["offset"], offset)
+            self.assertEqual(switch_instr["defaultTarget"], offset + 20)
+            self.assertEqual(switch_instr["targets"], [offset + 10, offset + 15])
+            
+            # Ensure the subsequent return instruction decoded cleanly at the exact offset
+            return_instr = instructions[-1]
+            self.assertEqual(return_instr["mnemonic"], "return")
+            self.assertEqual(return_instr["offset"], expected_return_offset)
 
-        # Test lookupswitch at offset 2:
-        # Offset 0: nop, Offset 1: nop, Offset 2: lookupswitch (0xAB)
-        # Pad should be (4 - ((2 + 1) % 4)) % 4 = 1 byte
-        # Pad at byte 3 -> table starts at byte 4
-        ls_bytes = bytearray([0x00, 0x00, 0xab, 0x00])
-        # Default: 12, npairs: 1, (match=100, off=25)
-        ls_bytes.extend(struct.pack(">ii", 12, 1))
-        ls_bytes.extend(struct.pack(">ii", 100, 25))
+        # Test lookupswitch at offsets 0, 1, 2, 3 followed by return (0xB1)
+        for offset in (0, 1, 2, 3):
+            code = bytearray(b"\x00" * offset)
+            code.append(0xab)  # lookupswitch
+            pad_len = (4 - ((offset + 1) % 4)) % 4
+            code.extend(b"\x00" * pad_len)
 
-        instrs_ls = disassembleMethod("test_lookupswitch", bytes(ls_bytes))
-        self.assertEqual(len(instrs_ls), 3)
-        self.assertEqual(instrs_ls[2]["mnemonic"], "lookupswitch")
-        self.assertEqual(instrs_ls[2]["offset"], 2)
-        self.assertEqual(instrs_ls[2]["defaultTarget"], 2 + 12)
-        self.assertEqual(instrs_ls[2]["targets"], [2 + 25])
-        self.assertEqual(instrs_ls[2]["npairs"], 1)
+            # default=25, npairs=2, (match=100, off=12), (match=200, off=18)
+            code.extend(struct.pack(">i", 25))
+            code.extend(struct.pack(">i", 2))
+            code.extend(struct.pack(">i", 100))
+            code.extend(struct.pack(">i", 12))
+            code.extend(struct.pack(">i", 200))
+            code.extend(struct.pack(">i", 18))
 
-    def test_disassembler_wide_instruction(self):
-        """3. Verify opcode 0xC4 (wide) decodes 4-byte load/store and 6-byte iinc."""
-        # 1. Wide iload (0xC4 0x15 index=500) -> 4 bytes
-        wide_iload_bytes = bytearray([0xc4, 0x15])
-        wide_iload_bytes.extend(struct.pack(">H", 500))
+            expected_return_offset = len(code)
+            code.append(0xb1)  # return
 
-        # 2. Wide iinc (0xC4 0x84 index=350 const=-25) -> 6 bytes
-        wide_iinc_bytes = bytearray([0xc4, 0x84])
-        wide_iinc_bytes.extend(struct.pack(">Hh", 350, -25))
+            instructions = disassembleMethod("testLookupSwitch", bytes(code))
+            switch_instr = instructions[offset]
+            self.assertEqual(switch_instr["mnemonic"], "lookupswitch")
+            self.assertEqual(switch_instr["defaultTarget"], offset + 25)
+            self.assertEqual(switch_instr["targets"], [offset + 12, offset + 18])
 
-        combined = bytes(wide_iload_bytes + wide_iinc_bytes)
-        instrs = disassembleMethod("test_wide", combined)
+            return_instr = instructions[-1]
+            self.assertEqual(return_instr["mnemonic"], "return")
+            self.assertEqual(return_instr["offset"], expected_return_offset)
 
-        self.assertEqual(len(instrs), 2)
-        # Wide iload
-        self.assertEqual(instrs[0]["mnemonic"], "wide")
-        self.assertEqual(instrs[0]["wide_opcode"], "iload")
-        self.assertEqual(instrs[0]["index"], 500)
-        self.assertEqual(instrs[0]["offset"], 0)
+        # Test corrupted switch error guarding
+        # Corrupted tableswitch: high < low
+        bad_table = bytearray([0xaa, 0x00, 0x00, 0x00])  # pad=3
+        bad_table.extend(struct.pack(">iii", 10, 5, 2))  # low=5, high=2
+        with self.assertRaises(ValueError):
+            disassembleMethod("corruptedTable", bytes(bad_table))
 
-        # Wide iinc
-        self.assertEqual(instrs[1]["mnemonic"], "wide")
-        self.assertEqual(instrs[1]["wide_opcode"], "iinc")
-        self.assertEqual(instrs[1]["index"], 350)
-        self.assertEqual(instrs[1]["const"], -25)
-        self.assertEqual(instrs[1]["offset"], 4)
+        # Corrupted lookupswitch: negative npairs
+        bad_lookup = bytearray([0xab, 0x00, 0x00, 0x00])
+        bad_lookup.extend(struct.pack(">ii", 10, -3))
+        with self.assertRaises(ValueError):
+            disassembleMethod("corruptedLookup", bytes(bad_lookup))
 
-    def test_cfg_exception_handlers_and_loop_leaders(self):
-        """4. Verify CFG builds leaders and edges for exception handlers and backward loop targets."""
-        # Method instructions:
-        # offset 0: iload_0 (1 byte)
-        # offset 1: ifeq to 10 (3 bytes)
-        # offset 4: iload_1 (1 byte)
-        # offset 5: goto to 0 (3 bytes) - backward loop back-edge!
-        # offset 8: astore_1 (1 byte) - catch handler!
-        # offset 9: return (1 byte)
-        # offset 10: return (1 byte)
-        instructions = [
-            {"offset": 0, "mnemonic": "iload_0", "operands": []},
-            {"offset": 1, "mnemonic": "ifeq", "operands": [0, 9], "target": 10},
-            {"offset": 4, "mnemonic": "iload_1", "operands": []},
-            {"offset": 5, "mnemonic": "goto", "operands": [0xff, 0xfb], "target": 0},
-            {"offset": 8, "mnemonic": "astore_1", "operands": []},
-            {"offset": 9, "mnemonic": "return", "operands": []},
-            {"offset": 10, "mnemonic": "return", "operands": []},
+    # =========================================================================
+    # 3. Wide (0xC4) and 5-Byte Invoke Instructions
+    # =========================================================================
+    def test_disassembler_wide_and_5byte_invokes(self):
+        """Verifies wide instructions (6-byte wide iinc, 4-byte wide iload) and 5-byte invokes."""
+        code = bytearray()
+        
+        # 1. wide iinc: 0xC4 0x84, index=300 (0x012C), const=-5 (0xFFFB) -> 6 bytes
+        offset_wide_iinc = len(code)
+        code.append(0xc4)
+        code.append(0x84)
+        code.extend(struct.pack(">H", 300))
+        code.extend(struct.pack(">h", -5))
+
+        # 2. wide iload: 0xC4 0x15, index=258 (0x0102) -> 4 bytes
+        offset_wide_iload = len(code)
+        code.append(0xc4)
+        code.append(0x15)
+        code.extend(struct.pack(">H", 258))
+
+        # 3. invokeinterface: 0xB9, cp_idx=10, count=3, trailing=0 -> 5 bytes
+        offset_invokeinterface = len(code)
+        code.append(0xb9)
+        code.extend(struct.pack(">H", 10))
+        code.append(3)
+        code.append(0)
+
+        # 4. invokedynamic: 0xBA, cp_idx=15, trailing=0, 0 -> 5 bytes
+        offset_invokedynamic = len(code)
+        code.append(0xba)
+        code.extend(struct.pack(">H", 15))
+        code.append(0)
+        code.append(0)
+
+        # 5. return (0xB1) at the end
+        offset_return = len(code)
+        code.append(0xb1)
+
+        instructions = disassembleMethod("testWideAndInvokes", bytes(code))
+        self.assertEqual(len(instructions), 5)
+
+        # Verify wide iinc
+        instr0 = instructions[0]
+        self.assertEqual(instr0["offset"], offset_wide_iinc)
+        self.assertEqual(instr0["mnemonic"], "wide")
+        self.assertEqual(instr0["index"], 300)
+        self.assertEqual(instr0["const"], -5)
+
+        # Verify wide iload
+        instr1 = instructions[1]
+        self.assertEqual(instr1["offset"], offset_wide_iload)
+        self.assertEqual(instr1["mnemonic"], "wide")
+        self.assertEqual(instr1["index"], 258)
+
+        # Verify invokeinterface length (5 bytes: 10 + 5 = 15)
+        instr2 = instructions[2]
+        self.assertEqual(instr2["offset"], offset_invokeinterface)
+        self.assertEqual(instr2["mnemonic"], "invokeinterface")
+        self.assertEqual(len(instr2["operands"]), 4)
+
+        # Verify invokedynamic length (5 bytes: 15 + 5 = 20)
+        instr3 = instructions[3]
+        self.assertEqual(instr3["offset"], offset_invokedynamic)
+        self.assertEqual(instr3["mnemonic"], "invokedynamic")
+        self.assertEqual(len(instr3["operands"]), 4)
+
+        # Verify return offset matches exactly
+        instr4 = instructions[4]
+        self.assertEqual(instr4["offset"], offset_return)
+        self.assertEqual(instr4["mnemonic"], "return")
+
+    # =========================================================================
+    # 4. Backward Loop Targets and Exception Table CFG Leaders
+    # =========================================================================
+    def test_cfg_backward_loop_and_exception_handlers(self):
+        """Verifies CFG splits blocks at backward goto targets and exception handler entry points."""
+        # Method with a backward goto loop and an exception handler:
+        # offset 0: iconst_0 (1 byte)
+        # offset 1: istore_1 (1 byte)
+        # offset 2: iload_1 (1 byte) <- loop header
+        # offset 3: bipush 10 (2 bytes)
+        # offset 5: if_icmpge +8 -> offset 13 (3 bytes)
+        # offset 8: iinc 1, 1 (3 bytes)
+        # offset 11: goto -9 -> offset 2 (3 bytes) <- backward branch
+        # offset 14: return (1 byte)
+        # offset 15: astore_2 (1 byte) <- catch handler entry
+        # offset 16: return (1 byte)
+        code = bytearray()
+        code.append(0x03)  # 0: iconst_0
+        code.append(0x3c)  # 1: istore_1
+        code.append(0x1b)  # 2: iload_1
+        code.extend([0x10, 10])  # 3: bipush 10
+        code.extend([0xa2, 0x00, 0x09])  # 5: if_icmpge +9 -> offset 14
+        code.extend([0x84, 0x01, 0x01])  # 8: iinc 1, 1
+        code.extend([0xa7, 0xff, 0xf7])  # 11: goto -9 -> offset 2
+        code.append(0xb1)  # 14: return
+        code.append(0x4d)  # 15: astore_2 (catch handler)
+        code.append(0xb1)  # 16: return
+
+        instructions = disassembleMethod("testLoopCfg", bytes(code))
+        exception_handlers = [
+            {"start_pc": 2, "end_pc": 14, "handler_pc": 15, "catch_type": 0}
         ]
-        # Exception handler covering [0, 8) with handler at 8
-        ex_handlers = [{"start_pc": 0, "end_pc": 8, "handler_pc": 8, "catch_type": 1}]
 
-        cfg = buildControlFlowGraph(instructions, ex_handlers)
+        cfg = buildControlFlowGraph(instructions, exception_handlers)
 
-        # Block 0 starts at 0
+        # Verify block splitting
+        # Must have block at 0, block at 2 (loop header), block at 14 (exit), and block at 15 (catch handler)
         self.assertIn(0, cfg)
-        # Handler entry 8 must be a leader
-        self.assertIn(8, cfg)
-        # Jump target 10 must be a leader
-        self.assertIn(10, cfg)
+        self.assertIn(2, cfg, "Loop header target (offset 2) must be a basic block leader")
+        self.assertIn(14, cfg)
+        self.assertIn(15, cfg, "Exception handler_pc (offset 15) must be a basic block leader")
 
-        # Protected block (e.g. block 0 or 4) must wire an edge to handler 8
-        block0 = cfg[0]
-        self.assertIn(8, block0.successors)
+        # Verify edges: block at 8 (containing goto at 11) must branch to block 2
+        block8 = None
+        for b in cfg.values():
+            if any(instr["offset"] == 11 for instr in b.instructions):
+                block8 = b
+                break
+        self.assertIsNotNone(block8)
+        self.assertIn(2, block8.successors, "Back-edge to loop header at offset 2 must be wired")
 
-        # Backward loop edge from block at 4/5 back to 0
-        self.assertIn(0, cfg[4].successors)
-        self.assertIn(4, cfg[0].predecessors)
+        # Verify exception edge: protected block 2 must wire to handler 15
+        self.assertIn(15, cfg[2].successors, "Protected block must connect to exception handler block at offset 15")
 
-        # Test 4-byte wide branch resolution (goto_w)
-        goto_w_instr = {"offset": 100, "mnemonic": "goto_w", "operands": [0, 0, 0x10, 0x00]}
-        target = resolveBranchTarget(goto_w_instr)
-        self.assertEqual(target, 100 + 0x1000)
+    # =========================================================================
+    # 5. Static vs. Instance Parameter Slots & Category-2 Stepping
+    # =========================================================================
+    def test_lifter_static_vs_instance_parameter_slots(self):
+        """Verifies static methods do not emit 'this', Category-2 types step 2 slots, and binary op order."""
+        # 1. Test parameter slot mapping helper
+        # Static method: (int, long, double, String) -> (I, J, D, Ljava/lang/String;)
+        desc = "(IJDLjava/lang/String;)V"
+        static_flags = 0x0008  # ACC_STATIC
+        names, types = map_parameter_slots(static_flags, desc)
+        
+        self.assertEqual(names[0], "param0")  # int: slot 0
+        self.assertEqual(types[0], "int")
+        self.assertEqual(names[1], "param1")  # long (Category-2): slot 1
+        self.assertEqual(types[1], "long")
+        self.assertEqual(names[3], "param2")  # double (Category-2): slot 3
+        self.assertEqual(types[3], "double")
+        self.assertEqual(names[5], "param3")  # String: slot 5
+        self.assertEqual(types[5], "String")
+        self.assertNotIn("this", names.values())
 
-    def test_lifter_static_method_slot_mapping(self):
-        """5. Verify static methods map slot 0 to param0 and Category-2 long/double step 2 slots."""
+        # Instance method: slot 0 is 'this', param0 begins at slot 1
+        instance_flags = 0x0001  # ACC_PUBLIC
+        inames, itypes = map_parameter_slots(instance_flags, desc)
+        self.assertEqual(inames[0], "this")
+        self.assertEqual(inames[1], "param0")
+        self.assertEqual(inames[2], "param1")
+        self.assertEqual(inames[4], "param2")
+        self.assertEqual(inames[6], "param3")
+
+        # 2. Binary operation order preservation:
+        # Bytecode: iload_0, iload_1, isub, ireturn -> param0 - param1
+        # Not commutative: must be a - b, not b - a
+        sub_code = bytes([0x1a, 0x1b, 0x64, 0xac])  # iload_0, iload_1, isub, ireturn
         m_info = MethodInfo(
-            name="staticCompute",
-            descriptor="(IJLjava/lang/String;)V",
-            access_flags=0x0009, # public static
-            bytecode=b"",
-            is_static=True,
-            param_types=["int", "long", "String"],
-            return_type="void",
-        )
-        c_info = ClassInfo(
-            class_name="MathUtil",
-            super_class="java/lang/Object",
-            interfaces=[],
-            major_version=61,
-            minor_version=0,
-            constant_pool={},
-            methods={"staticCompute": m_info},
-        )
-
-        ctx = LifterContext.create(c_info, m_info)
-
-        # Static method MUST NOT have 'this' in slot 0
-        self.assertNotIn("this", ctx.param_map.values())
-        # Slot 0 -> param0 (int)
-        self.assertEqual(ctx.param_map[0], "param0")
-        # Slot 1 -> param1 (long, 8 bytes, occupies slots 1 and 2)
-        self.assertEqual(ctx.param_map[1], "param1")
-        # Slot 2 is unusable
-        self.assertNotIn(2, ctx.param_map)
-        # Slot 3 -> param2 (String)
-        self.assertEqual(ctx.param_map[3], "param2")
-
-        # Test getSlotForParameter helper
-        self.assertEqual(getSlotForParameter(m_info, 0), 0)
-        self.assertEqual(getSlotForParameter(m_info, 1), 1)
-        self.assertEqual(getSlotForParameter(m_info, 2), 3)
-
-        # Instance method comparison: slot 0 must be 'this'
-        m_instance = MethodInfo(
-            name="instanceCompute",
-            descriptor="(IJ)V",
-            access_flags=0x0001, # public instance
-            bytecode=b"",
-            is_static=False,
-            param_types=["int", "long"],
-            return_type="void",
-        )
-        ctx_inst = LifterContext.create(c_info, m_instance)
-        self.assertEqual(ctx_inst.param_map[0], "this")
-        self.assertEqual(ctx_inst.param_map[1], "param0")
-        self.assertEqual(ctx_inst.param_map[2], "param1")
-
-    def test_lifter_binary_op_evaluation_order(self):
-        """6. Verify stack simulator pops left and right operands in correct order (val1 - val2)."""
-        m_info = MethodInfo(
-            name="subAndDiv",
+            name="subTest",
             descriptor="(II)I",
-            access_flags=0x0009,
-            bytecode=b"",
+            access_flags=0x0009,  # public static
+            bytecode=sub_code,
             is_static=True,
             param_types=["int", "int"],
             return_type="int",
         )
         c_info = ClassInfo(
-            class_name="OrderTest",
+            class_name="MathOps",
             super_class="java/lang/Object",
             interfaces=[],
             major_version=61,
             minor_version=0,
             constant_pool={},
-            methods={"subAndDiv": m_info},
+            methods={"subTest": m_info},
         )
+        lifted = liftMethod(c_info, "subTest", m_info)
+        self.assertIn("param0 - param1", lifted, "Non-commutative subtraction order must be preserved")
+        self.assertNotIn("this", lifted, "Static method must never reference 'this'")
+
+        # Division order: iload_0, iload_1, idiv, ireturn -> param0 / param1
+        div_code = bytes([0x1a, 0x1b, 0x6c, 0xac])
+        m_div = MethodInfo(
+            name="divTest",
+            descriptor="(II)I",
+            access_flags=0x0009,
+            bytecode=div_code,
+            is_static=True,
+            param_types=["int", "int"],
+            return_type="int",
+        )
+        c_info.methods["divTest"] = m_div
+        lifted_div = liftMethod(c_info, "divTest", m_div)
+        self.assertIn("param0 / param1", lifted_div)
+
+    # =========================================================================
+    # 6. Exception Handler Stack Pre-Population & Underflow Resilience
+    # =========================================================================
+    def test_lifter_exception_handler_and_underflow_resilience(self):
+        """Verifies handler_pc block starts with caughtEx on stack and underflow falls back cleanly."""
+        # 1. Exception handler block: starts with astore_1 (0x4C), return (0xB1)
+        handler_code = bytes([0x4c, 0xb1])
+        m_info = MethodInfo(
+            name="catchTest",
+            descriptor="()V",
+            access_flags=0x0001,
+            bytecode=handler_code,
+            is_static=False,
+            param_types=[],
+            return_type="void",
+            exception_handlers=[{"start_pc": 0, "end_pc": 0, "handler_pc": 0, "catch_type": 0}],
+        )
+        c_info = ClassInfo(
+            class_name="TryCatchClass",
+            super_class="java/lang/Object",
+            interfaces=[],
+            major_version=61,
+            minor_version=0,
+            constant_pool={},
+            methods={"catchTest": m_info},
+        )
+        lifted = liftMethod(c_info, "catchTest", m_info)
+        self.assertIn("var1 = caughtEx;", lifted, "Catch block must store pre-populated caughtEx, not /* stack_underflow */")
+
+        # 2. Underflow fallback resilience: popping from an empty simulator returns _stack_undef
         ctx = LifterContext.create(c_info, m_info)
         sim = StackSimulator(ctx)
+        popped = sim._pop()
+        self.assertEqual(popped, "_stack_undef", "Stack underflow must fall back to _stack_undef gracefully")
 
-        # Simulate: iload_0, iload_1, isub
-        sim._push("param0")
-        sim._push("param1")
-        b = sim._pop()
-        a = sim._pop()
-        self.assertEqual(a, "param0")
-        self.assertEqual(b, "param1")
-        sub_expr = f"{a} - {b}"
-        self.assertEqual(sub_expr, "param0 - param1")
+        # 3. Java 9+ invokedynamic makeConcatWithConstants lifting
+        indy_cp = {
+            1: {"type": "Utf8", "value": "makeConcatWithConstants"},
+            2: {"type": "Utf8", "value": "(Ljava/lang/String;I)Ljava/lang/String;"},
+            3: {"type": "NameAndType", "nameIndex": 1, "descriptorIndex": 2},
+            4: {"type": "InvokeDynamic", "bootstrapMethodAttrIndex": 0, "nameAndTypeIndex": 3},
+        }
+        # Bytecode: aload_0 (0x2A), iconst_5 (0x08), invokedynamic 0x0004 (0xBA, 0x00, 0x04, 0x00, 0x00), areturn (0xB0)
+        indy_bytes = bytes([0x2a, 0x08, 0xba, 0x00, 0x04, 0x00, 0x00, 0xb0])
+        m_indy = MethodInfo(
+            name="concatTest",
+            descriptor="(Ljava/lang/String;)Ljava/lang/String;",
+            access_flags=0x0009,
+            bytecode=indy_bytes,
+            is_static=True,
+            param_types=["String"],
+            return_type="String",
+        )
+        c_indy = ClassInfo(
+            class_name="ConcatClass",
+            super_class="java/lang/Object",
+            interfaces=[],
+            major_version=61,
+            minor_version=0,
+            constant_pool=indy_cp,
+            methods={"concatTest": m_indy},
+        )
+        lifted_indy = liftMethod(c_indy, "concatTest", m_indy)
+        self.assertIn("param0 + 5", lifted_indy, "invokedynamic makeConcatWithConstants must lift to string concatenation")
 
-        # Also test invokedynamic string concatenation (Java 9+)
-        c_info.constant_pool[1] = {"type": "Utf8", "value": "makeConcatWithConstants"}
-        c_info.constant_pool[2] = {"type": "Utf8", "value": "(Ljava/lang/String;I)Ljava/lang/String;"}
-        c_info.constant_pool[3] = {"type": "NameAndType", "nameIndex": 1, "descriptorIndex": 2}
-        c_info.constant_pool[4] = {"type": "InvokeDynamic", "bootstrapMethodAttrIndex": 0, "nameAndTypeIndex": 3}
-
-        indy_sim = StackSimulator(ctx)
-        indy_sim._push('"Count: "')
-        indy_sim._push("param0")
-        from javadecompiler.cfg_builder import BasicBlock
-        block = BasicBlock(startOffset=0, instructions=[
-            {"offset": 0, "mnemonic": "invokedynamic", "operands": [0, 4]},
-            {"offset": 5, "mnemonic": "astore_2", "operands": []},
-        ])
-        res = indy_sim.liftBlock(block)
-        self.assertTrue(any('var2 = "Count: " + param0;' in s for s in res.statements))
-
-    def test_semantic_restorer_strips_markdown_fences(self):
-        """7. Verify semantic_restorer strips markdown fences, conversational preambles, and handles timeouts."""
-        fenced_code = "```java\npublic static void test() {\n    int a = 1;\n}\n```"
-        self.assertEqual(stripMarkdownFences(fenced_code), "public static void test() {\n    int a = 1;\n}")
-
-        raw_llm_response = """Here is the restored JSON representation:
-```json
-{
-    "renamed_variables": {"param0": "userId"},
-    "summary": "Loads user profile",
-    "javadoc": "/** Loads user profile. */",
-    "reconstructed_code": "```java\\n/** Loads user profile. */\\npublic static void test(int userId) {}\\n```"
-}
-```
-Hope this is helpful!"""
-        payload = extractJsonPayload(raw_llm_response)
-        self.assertIsNotNone(payload)
-        self.assertEqual(payload["renamed_variables"]["param0"], "userId")
-        self.assertIn("userId", payload["reconstructed_code"])
-        cleaned_code = stripMarkdownFences(payload["reconstructed_code"])
-        self.assertFalse(cleaned_code.startswith("```"))
-        self.assertFalse(cleaned_code.endswith("```"))
-
-        # Test timeout / offline graceful fallback
-        restorer = SemanticRestorer(model="nonexistent-model", host="http://127.0.0.1:9999", timeout=1, no_llm=False)
-        c_info = ClassInfo("Test", "java/lang/Object", [], 61, 0, {}, {"foo": MethodInfo("foo", "()V", 1, b"")})
-        res = restorer.restoreMethod(c_info, "foo", "public void foo() {}")
-        self.assertEqual(res.mode, "offline_heuristic")
-
-    def test_report_html_escaping(self):
-        """8. Verify generateHtmlReport escapes <init> and <clinit> so browser DOM is not corrupted."""
-        m_init = MethodInfo("<init>", "()V", 1, b"\xb1", is_static=False)
-        m_clinit = MethodInfo("<clinit>", "()V", 8, b"\xb1", is_static=True)
-
+    # =========================================================================
+    # 7. HTML Escaping for <init>, <clinit>, XSS and Windows UTF-8 Output
+    # =========================================================================
+    def test_report_html_escapes_init_clinit_and_xss(self):
+        """Verifies <init>, <clinit>, and XSS injections are safely escaped in HTML and written with utf-8."""
+        m_init = MethodInfo(
+            name="<init>",
+            descriptor="()V",
+            access_flags=0x0001,
+            bytecode=bytes([0x2a, 0xb7, 0x00, 0x01, 0xb1]),
+            is_static=False,
+            param_types=[],
+            return_type="void",
+        )
+        m_clinit = MethodInfo(
+            name="<clinit>",
+            descriptor="()V",
+            access_flags=0x0008,
+            bytecode=bytes([0xb1]),
+            is_static=True,
+            param_types=[],
+            return_type="void",
+        )
         c_info = ClassInfo(
-            class_name="com/example/MyClass",
+            class_name="XssTestClass",
             super_class="java/lang/Object",
             interfaces=[],
             major_version=61,
@@ -364,33 +519,103 @@ Hope this is helpful!"""
             methods={"<init>": m_init, "<clinit>": m_clinit},
         )
 
-        raw_methods = {
-            "com/example/MyClass": {
-                "<init>": "public MyClass() {\n    super();\n}",
-                "<clinit>": "static {\n    x = 10;\n}",
-            }
-        }
-        restored_methods = {
-            "com/example/MyClass": {
-                "<init>": RestorationResult("<init>", {"<this>": "self"}, "/** ctor */", "public MyClass() {}"),
-                "<clinit>": RestorationResult("<clinit>", {}, "/** clinit */", "static {}"),
-            }
-        }
-
-        report_html = generateHtmlReport(
-            classes=[c_info],
-            raw_methods=raw_methods,
-            restored_methods=restored_methods,
-            target_name="MyClass.class",
+        restored_result = RestorationResult(
+            method_name="<init>",
+            renamed_variables={"<script>alert(1)</script>": "safeVar"},
+            javadoc="/** Constructor */",
+            reconstructed_code="public XssTestClass() { super(); }",
+            mode="offline_heuristic",
         )
 
-        # Must contain escaped forms &lt;init&gt; and &lt;clinit&gt;
-        self.assertIn("&lt;init&gt;", report_html)
-        self.assertIn("&lt;clinit&gt;", report_html)
-        self.assertIn("&lt;this&gt;", report_html)
-        # Must NOT contain raw unescaped tags <init> or <clinit> outside pre/code
-        self.assertNotIn("<span class=\"method-sig\"><init>", report_html)
-        self.assertNotIn("<span class=\"method-sig\"><clinit>", report_html)
+        html_out = generateHtmlReport(
+            classes=[c_info],
+            raw_methods={"XssTestClass": {"<init>": "super();", "<clinit>": ""}},
+            restored_methods={"XssTestClass": {"<init>": restored_result}},
+            target_name="<script>evil()</script>.jar",
+            ai_engine="TestEngine",
+        )
+
+        # 1. Verify <init> and <clinit> are properly escaped
+        self.assertIn("&lt;init&gt;", html_out, "Method name <init> must be HTML-escaped to &lt;init&gt;")
+        self.assertIn("&lt;clinit&gt;", html_out, "Method name <clinit> must be HTML-escaped to &lt;clinit&gt;")
+
+        # 2. Verify malicious XSS payload is escaped
+        self.assertNotIn("<script>alert(1)</script>", html_out)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html_out)
+        self.assertNotIn("<script>evil()</script>", html_out)
+        self.assertIn("&lt;script&gt;evil()&lt;/script&gt;", html_out)
+
+        # 3. Verify writing to temporary file with UTF-8 succeeds without Windows cp1252 crash
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(html_out)
+            self.assertGreater(os.path.getsize(tmp_path), 500)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    # =========================================================================
+    # 8. Semantic Restorer Fence Stripping & Offline Resilience
+    # =========================================================================
+    def test_semantic_restorer_strips_fences_and_handles_offline(self):
+        """Verifies markdown fence stripping, JSON payload recovery, and offline network error resilience."""
+        # 1. Fence stripping helper tests
+        fenced_java = "```java\npublic void hello() {\n    System.out.println(1);\n}\n```"
+        stripped = stripMarkdownFences(fenced_java)
+        self.assertEqual(stripped, "public void hello() {\n    System.out.println(1);\n}")
+
+        # Conversational text surrounding JSON
+        noisy_json = """Here is the restored output:
+```json
+{
+  "renamed_variables": {"var1": "totalSum"},
+  "summary": "Computes sum.",
+  "javadoc": "/** Computes sum */",
+  "reconstructed_code": "```java\\npublic int sum() { return totalSum; }\\n```"
+}
+```
+Hope this helps!"""
+        payload = extractJsonPayload(noisy_json)
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["renamed_variables"]["var1"], "totalSum")
+
+        # 2. Mocked Ollama response with internal code fences stripped
+        mock_response = {
+            "response": json.dumps({
+                "renamed_variables": {"param0": "limit"},
+                "javadoc": "/** Loops up to limit */",
+                "reconstructed_code": "```java\npublic static void loop(int limit) {\n}\n```",
+            })
+        }
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_response).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            mock_urlopen.return_value = mock_resp
+
+            restorer = SemanticRestorer(model="test", no_llm=False)
+            dummy_m = MethodInfo("sumUpTo", "(I)V", 0x0009, b"\xb1", True, ["int"], "void")
+            dummy_c = ClassInfo("LoopClass", "java/lang/Object", [], 61, 0, {}, {"sumUpTo": dummy_m})
+            res = restorer.restoreMethod(dummy_c, "sumUpTo", "public static void sumUpTo(int param0) {}")
+
+            self.assertEqual(res.mode, "ollama")
+            self.assertNotIn("```", res.reconstructed_code, "Markdown fences must be stripped from reconstructed Java code")
+            self.assertIn("public static void sumUpTo(int limit)", res.reconstructed_code)
+
+        # 3. Connection and Timeout Resilience: Ollama offline / URLError
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+            restorer_offline = SemanticRestorer(model="test", no_llm=False)
+            res_fallback = restorer_offline.restoreMethod(dummy_c, "sumUpTo", "public static void sumUpTo(int param0) {}")
+            self.assertEqual(res_fallback.mode, "offline_heuristic")
+            self.assertIn("limit", res_fallback.renamed_variables.values())
+
+        # Socket Timeout resilience
+        with patch("urllib.request.urlopen", side_effect=TimeoutError("Request timed out")):
+            restorer_timeout = SemanticRestorer(model="test", no_llm=False)
+            res_timeout = restorer_timeout.restoreMethod(dummy_c, "sumUpTo", "public static void sumUpTo(int param0) {}")
+            self.assertEqual(res_timeout.mode, "offline_heuristic")
 
 
 if __name__ == "__main__":

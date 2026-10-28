@@ -222,7 +222,12 @@ def parseConstantPool(classReader: ClassFileReader, poolCount: int) -> Dict[int,
         elif currentTag in (tagLong, tagDouble):
             highBytes: int = classReader.readUnsignedInt()
             lowBytes: int = classReader.readUnsignedInt()
-            constantPool[currentIndex] = {"type": "Primitive64", "high": highBytes, "low": lowBytes}
+            constantPool[currentIndex] = {
+                "type": "Primitive64",
+                "kind": "Long" if currentTag == tagLong else "Double",
+                "high": highBytes,
+                "low": lowBytes,
+            }
             # JVM Spec §4.4.5: 8-byte constants take two entries; index n+1 is unusable but present
             constantPool[currentIndex + 1] = None
             currentIndex += 1 

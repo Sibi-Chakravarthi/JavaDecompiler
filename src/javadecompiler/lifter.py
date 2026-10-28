@@ -89,6 +89,33 @@ def invertCondition(cond: str) -> str:
     return f"!({inner})"
 
 
+def map_parameter_slots(access_flags: int, descriptor: str) -> Tuple[Dict[int, str], Dict[int, str]]:
+    """Maps local variable slot indices to parameter names and types accurately.
+    
+    Static methods (ACC_STATIC 0x0008) allocate slot 0 to the first parameter (not 'this').
+    Category-2 types ('long', 'double') occupy 2 local variable slots each.
+    """
+    param_types, _ = parseDescriptor(descriptor)
+    is_static = bool(access_flags & 0x0008)
+
+    slot_to_name: Dict[int, str] = {}
+    slot_to_type: Dict[int, str] = {}
+    slot = 0
+
+    if not is_static:
+        slot_to_name[0] = "this"
+        slot_to_type[0] = "this"
+        slot = 1
+
+    for i, p_type in enumerate(param_types):
+        p_name = f"param{i}"
+        slot_to_name[slot] = p_name
+        slot_to_type[slot] = p_type
+        slot += 2 if p_type in ("long", "double") else 1
+
+    return slot_to_name, slot_to_type
+
+
 def getSlotForParameter(method_info: MethodInfo, param_index: int) -> int:
     """Returns the JVM local variable slot index for a given parameter index."""
     slot = 0 if method_info.is_static else 1
@@ -105,25 +132,18 @@ class LifterContext:
     constant_pool: Dict[int, Any]
     param_map: Dict[int, str] = field(default_factory=dict)
     var_types: Dict[int, str] = field(default_factory=dict)
+    class_info: Optional[ClassInfo] = None
 
     @classmethod
     def create(cls, class_info: ClassInfo, method_info: MethodInfo) -> "LifterContext":
-        param_map: Dict[int, str] = {}
-        slot = 0
-        if not method_info.is_static:
-            param_map[0] = "this"
-            slot = 1
-
-        for i, pType in enumerate(method_info.param_types):
-            pName = f"param{i}"
-            param_map[slot] = pName
-            slot += 2 if pType in ("long", "double") else 1
-
+        param_map, var_types = map_parameter_slots(method_info.access_flags, method_info.descriptor)
         return cls(
             class_name=class_info.class_name,
             method_info=method_info,
             constant_pool=class_info.constant_pool,
             param_map=param_map,
+            var_types=var_types,
+            class_info=class_info,
         )
 
 
