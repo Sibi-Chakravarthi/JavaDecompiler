@@ -277,9 +277,3 @@ uv run python src/javadecompiler/run_batch.py src/javadecompiler/Java_Test_Files
 - **Behavioral Intent Classification:** Threat verdicts assessing whether decompiled methods exhibit backdoor or reverse shell behaviors.
 - **Broader JVM Opcode Coverage:** Support for advanced JVM instructions such as `tableswitch`, `lookupswitch`, and `invokedynamic` lambda metafactories.
 
----
-
-## 10. License & Authors
-
-- **Author:** Sibi Chakravarthi (`sibichakravarthima31@gmail.com`)
-- **Project:** NeuroDecomp
