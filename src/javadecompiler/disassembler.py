@@ -139,9 +139,16 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
     0xc1: ("instanceof", 2),
     0xc2: ("monitorenter", 0),
     0xc3: ("monitorexit", 0),
+    0xc4: ("wide", -1),
     0xc5: ("multianewarray", 3),
 }
 
+
+_BRANCH_2BYTE_MNEMONICS = {
+    "ifeq", "ifne", "iflt", "ifge", "ifgt", "ifle",
+    "if_icmpeq", "if_icmpne", "if_icmplt", "if_icmpge", "if_icmpgt", "if_icmple",
+    "if_acmpeq", "if_acmpne", "goto", "jsr", "ifnull", "ifnonnull",
+}
 
 
 def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str, Any]]:
@@ -155,20 +162,22 @@ def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str, Any
         currentOffset += 1
 
         if opcode == 0xaa:  # tableswitch
-            pad = (3 - (instructionOffset % 4))
+            pad = (4 - ((instructionOffset + 1) % 4)) % 4
             currentOffset += pad
             if currentOffset + 12 <= codeLength:
                 default_off = struct.unpack(">i", rawBytecode[currentOffset:currentOffset+4])[0]
                 low = struct.unpack(">i", rawBytecode[currentOffset+4:currentOffset+8])[0]
                 high = struct.unpack(">i", rawBytecode[currentOffset+8:currentOffset+12])[0]
                 currentOffset += 12
+                if high < low:
+                    raise ValueError(f"Corrupted tableswitch at offset {instructionOffset}: high ({high}) < low ({low}) in method '{methodName}'")
                 num_offsets = high - low + 1
+                if num_offsets < 0 or num_offsets > 65536 or currentOffset + num_offsets * 4 > codeLength:
+                    raise ValueError(f"Invalid or truncated tableswitch offsets count {num_offsets} at offset {instructionOffset} in method '{methodName}'")
                 jump_offsets: List[int] = []
-                if 0 <= num_offsets <= 65536:
-                    for _ in range(num_offsets):
-                        if currentOffset + 4 <= codeLength:
-                            jump_offsets.append(struct.unpack(">i", rawBytecode[currentOffset:currentOffset+4])[0])
-                            currentOffset += 4
+                for _ in range(num_offsets):
+                    jump_offsets.append(struct.unpack(">i", rawBytecode[currentOffset:currentOffset+4])[0])
+                    currentOffset += 4
                 operands = list(rawBytecode[instructionOffset + 1:currentOffset])
                 instructions.append({
                     "offset": instructionOffset,
@@ -184,20 +193,20 @@ def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str, Any
                 raise ValueError(f"Truncated tableswitch at offset {instructionOffset} in method '{methodName}'")
 
         if opcode == 0xab:  # lookupswitch
-            pad = (3 - (instructionOffset % 4))
+            pad = (4 - ((instructionOffset + 1) % 4)) % 4
             currentOffset += pad
             if currentOffset + 8 <= codeLength:
                 default_off = struct.unpack(">i", rawBytecode[currentOffset:currentOffset+4])[0]
                 npairs = struct.unpack(">i", rawBytecode[currentOffset+4:currentOffset+8])[0]
                 currentOffset += 8
+                if npairs < 0 or npairs > 65536 or currentOffset + npairs * 8 > codeLength:
+                    raise ValueError(f"Invalid or truncated lookupswitch npairs {npairs} at offset {instructionOffset} in method '{methodName}'")
                 pairs: List[Tuple[int, int]] = []
-                if 0 <= npairs <= 65536:
-                    for _ in range(npairs):
-                        if currentOffset + 8 <= codeLength:
-                            m_val = struct.unpack(">i", rawBytecode[currentOffset:currentOffset+4])[0]
-                            off_val = struct.unpack(">i", rawBytecode[currentOffset+4:currentOffset+8])[0]
-                            pairs.append((m_val, off_val))
-                            currentOffset += 8
+                for _ in range(npairs):
+                    m_val = struct.unpack(">i", rawBytecode[currentOffset:currentOffset+4])[0]
+                    off_val = struct.unpack(">i", rawBytecode[currentOffset+4:currentOffset+8])[0]
+                    pairs.append((m_val, off_val))
+                    currentOffset += 8
                 operands = list(rawBytecode[instructionOffset + 1:currentOffset])
                 instructions.append({
                     "offset": instructionOffset,
@@ -211,6 +220,46 @@ def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str, Any
                 continue
             else:
                 raise ValueError(f"Truncated lookupswitch at offset {instructionOffset} in method '{methodName}'")
+
+        if opcode == 0xc4:  # wide
+            if currentOffset >= codeLength:
+                raise ValueError(f"Truncated wide instruction at offset {instructionOffset} in method '{methodName}'")
+            sub_opcode = rawBytecode[currentOffset]
+            currentOffset += 1
+            sub_mnemonic, _ = jvmOpcodes.get(sub_opcode, (f"opcode_0x{sub_opcode:02x}", 0))
+            if sub_opcode == 0x84:  # iinc
+                if currentOffset + 4 > codeLength:
+                    raise ValueError(f"Truncated wide iinc at offset {instructionOffset} in method '{methodName}'")
+                index = struct.unpack(">H", rawBytecode[currentOffset:currentOffset+2])[0]
+                currentOffset += 2
+                const = struct.unpack(">h", rawBytecode[currentOffset:currentOffset+2])[0]
+                currentOffset += 2
+                operands = list(rawBytecode[instructionOffset + 1:currentOffset])
+                instructions.append({
+                    "offset": instructionOffset,
+                    "mnemonic": "wide",
+                    "sub_opcode": sub_opcode,
+                    "wide_opcode": sub_mnemonic,
+                    "index": index,
+                    "const": const,
+                    "operands": operands,
+                })
+                continue
+            else:
+                if currentOffset + 2 > codeLength:
+                    raise ValueError(f"Truncated wide instruction at offset {instructionOffset} in method '{methodName}'")
+                index = struct.unpack(">H", rawBytecode[currentOffset:currentOffset+2])[0]
+                currentOffset += 2
+                operands = list(rawBytecode[instructionOffset + 1:currentOffset])
+                instructions.append({
+                    "offset": instructionOffset,
+                    "mnemonic": "wide",
+                    "sub_opcode": sub_opcode,
+                    "wide_opcode": sub_mnemonic,
+                    "index": index,
+                    "operands": operands,
+                })
+                continue
 
         if opcode not in jvmOpcodes:
             raise ValueError(
@@ -227,10 +276,25 @@ def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str, Any
                 if currentOffset < codeLength:
                     operands.append(rawBytecode[currentOffset])
                     currentOffset += 1
-        instructions.append({
+
+        instr_dict: Dict[str, Any] = {
             "offset": instructionOffset,
             "mnemonic": mnemonic,
-            "operands": operands
-        })
+            "operands": operands,
+        }
+
+        # Decode signed immediates and targets for downstream phases
+        if mnemonic in _BRANCH_2BYTE_MNEMONICS and len(operands) == 2:
+            raw_off = struct.unpack(">h", bytes(operands))[0]
+            instr_dict["target"] = instructionOffset + raw_off
+        elif mnemonic in ("goto_w", "jsr_w") and len(operands) == 4:
+            raw_off = struct.unpack(">i", bytes(operands))[0]
+            instr_dict["target"] = instructionOffset + raw_off
+        elif mnemonic == "bipush" and len(operands) == 1:
+            instr_dict["value"] = struct.unpack(">b", bytes(operands))[0]
+        elif mnemonic == "sipush" and len(operands) == 2:
+            instr_dict["value"] = struct.unpack(">h", bytes(operands))[0]
+
+        instructions.append(instr_dict)
 
     return instructions
