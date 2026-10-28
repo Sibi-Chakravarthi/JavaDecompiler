@@ -172,35 +172,6 @@ class UiServerHandler(BaseHTTPRequestHandler):
             else:
                 classes = [parseClassFile(str(target_path))]
 
-            # Lift and disassemble methods
-            raw_methods_dict: Dict[str, Dict[str, str]] = {}
-            decompiled_data: Dict[str, Dict[str, Dict[str, str]]] = {}
-
-            for c_info in classes:
-                c_name = c_info.class_name
-                raw_methods_dict[c_name] = {}
-                decompiled_data[c_name] = {}
-
-                for m_name, m_info in c_info.methods.items():
-                    if not m_info.bytecode:
-                        continue
-                    try:
-                        raw_code = liftMethod(m_name, m_info.bytecode, c_info.constant_pool)
-                    except Exception:
-                        raw_code = f"// Error lifting method {m_name}"
-
-                    try:
-                        ins = disassembleMethod(m_name, m_info.bytecode)
-                        bc_text = "\n".join(f"0x{i.offset:02x}: {i.mnemonic} {i.operands}".strip() for i in ins)
-                    except Exception:
-                        bc_text = "// Error disassembling method"
-
-                    raw_methods_dict[c_name][m_name] = raw_code
-                    decompiled_data[c_name][m_name] = {
-                        "liftedSource": raw_code,
-                        "bytecodeText": bc_text,
-                    }
-
             # Run Security Scanner
             scanner = SecurityScanner(
                 enable_llm=enable_llm,
@@ -209,6 +180,55 @@ class UiServerHandler(BaseHTTPRequestHandler):
                 llm_investigate=llm_investigate,
             )
             scan_res: ScanResult = scanner.scan_file(str(target_path))
+
+            # Extract decompiled methods and bytecode from scan_res & classes
+            raw_methods_dict: Dict[str, Dict[str, str]] = {}
+            decompiled_data: Dict[str, Dict[str, Dict[str, str]]] = {}
+
+            for c_info in classes:
+                c_name = c_info.class_name
+                raw_methods_dict[c_name] = {}
+                decompiled_data[c_name] = {}
+                c_analysis = scan_res.classes.get(c_name)
+
+                for m_name, m_info in c_info.methods.items():
+                    if not m_info.bytecode:
+                        continue
+
+                    m_analysis = c_analysis.methods.get(m_name) if c_analysis else None
+
+                    # 1. Lifted pseudo-code
+                    if m_analysis and m_analysis.liftedCode and not m_analysis.liftedCode.startswith("// Lifter fallback"):
+                        raw_code = m_analysis.liftedCode
+                    else:
+                        try:
+                            raw_code = liftMethod(c_info, m_name, m_info)
+                        except Exception as e:
+                            raw_code = f"// Error lifting method {m_name}: {e}"
+
+                    # 2. Bytecode instructions
+                    if m_analysis and m_analysis.bytecodeInstructions:
+                        instructions = m_analysis.bytecodeInstructions
+                    else:
+                        try:
+                            instructions = disassembleMethod(m_name, m_info.bytecode)
+                        except Exception:
+                            instructions = []
+
+                    bc_lines = []
+                    for instr in instructions:
+                        off = instr.get("offset", 0)
+                        mn = instr.get("mnemonic", "")
+                        ops = instr.get("operands", [])
+                        ops_str = " ".join(f"0x{op:02x}" if isinstance(op, int) else str(op) for op in ops) if ops else ""
+                        bc_lines.append(f"0x{off:04x}: {mn} {ops_str}".rstrip())
+                    bc_text = "\n".join(bc_lines) if bc_lines else "// No bytecode instructions"
+
+                    raw_methods_dict[c_name][m_name] = raw_code
+                    decompiled_data[c_name][m_name] = {
+                        "liftedSource": raw_code,
+                        "bytecodeText": bc_text,
+                    }
 
             # HTML & SARIF reports
             html_report = generateHtmlReport(
