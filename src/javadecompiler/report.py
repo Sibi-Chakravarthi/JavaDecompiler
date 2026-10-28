@@ -330,15 +330,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def _getBadgeForCategory(cat: str) -> str:
+    escaped_cat = html.escape(cat)
     if "Network" in cat:
-        return f'<span class="badge badge-network">{cat}</span>'
+        return f'<span class="badge badge-network">{escaped_cat}</span>'
     elif "Crypto" in cat:
-        return f'<span class="badge badge-crypto">{cat}</span>'
+        return f'<span class="badge badge-crypto">{escaped_cat}</span>'
     elif "File" in cat:
-        return f'<span class="badge badge-file">{cat}</span>'
+        return f'<span class="badge badge-file">{escaped_cat}</span>'
     elif "Process" in cat:
-        return f'<span class="badge badge-proc">{cat}</span>'
-    return f'<span class="badge badge-clean">{cat}</span>'
+        return f'<span class="badge badge-proc">{escaped_cat}</span>'
+    return f'<span class="badge badge-clean">{escaped_cat}</span>'
 
 
 def generateHtmlReport(
@@ -349,7 +350,7 @@ def generateHtmlReport(
     ai_engine: str = "Local LLM (qwen2.5-coder:14b)",
     scan_result: Optional[Any] = None,
 ) -> str:
-    """Renders a complete, standalone dark-themed HTML report."""
+    """Renders a complete, standalone dark-themed HTML report with safe HTML escaping."""
     total_methods = sum(len(c.methods) for c in classes)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -388,15 +389,15 @@ def generateHtmlReport(
             rawCode = cRaw.get(mName, "// No raw lifted code")
             restResult = cRestored.get(mName)
 
-            # Generate CFG text
+            # Generate CFG text with exception handlers included
             instructions = disassembleMethod(mName, mInfo.bytecode)
-            cfg = buildControlFlowGraph(instructions)
+            cfg = buildControlFlowGraph(instructions, getattr(mInfo, "exception_handlers", []))
             cfgText = printControlFlowGraphToString(cfg, mName).strip()
 
-            # Renamed vars summary
+            # Renamed vars summary with safe HTML escaping
             renamed_html = ""
             if restResult and restResult.renamed_variables:
-                items = [f"<b>{k}</b> &rarr; <i>{v}</i>" for k, v in restResult.renamed_variables.items()]
+                items = [f"<b>{html.escape(k)}</b> &rarr; <i>{html.escape(v)}</i>" for k, v in restResult.renamed_variables.items()]
                 renamed_html = f'<div class="renamed-vars"><strong>Restored Identifiers:</strong> {", ".join(items)}</div>'
 
             # Security findings for method
