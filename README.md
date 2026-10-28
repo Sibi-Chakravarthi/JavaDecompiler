@@ -213,7 +213,7 @@ options:
 ```
 JavaDecompiler/
 ├── pyproject.toml              # Project dependencies and CLI entry point
-├── README.md                   # Project documentation
+├── README.md                   # Project documentation (this project).
 ├── NeuroDecomp_Revised.md      # Architecture specification & roadmap
 ├── src/
 │   └── javadecompiler/
