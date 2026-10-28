@@ -442,7 +442,15 @@
 
         const cObj = currentScanData.scanResult.classes[className];
         const mObj = cObj ? cObj.methods[methodName] : null;
-        activeMethodDesc.textContent = mObj ? mObj.descriptor : "";
+        let descText = mObj ? mObj.descriptor : "";
+        const decompiledMethodPre = (currentScanData.decompiled[className] || {})[methodName];
+        if (decompiledMethodPre && decompiledMethodPre.renamedVars) {
+            const varCount = Object.keys(decompiledMethodPre.renamedVars).length;
+            if (varCount > 0) {
+                descText += ` • ${varCount} semantic variable(s) restored`;
+            }
+        }
+        activeMethodDesc.textContent = descText;
 
         renderCodeViewport(className, methodName, targetLine);
     }
@@ -459,8 +467,19 @@
         }
 
         const isBytecode = activeView === "bytecode";
-        const codeText = isBytecode ? decompiledMethod.bytecodeText : decompiledMethod.liftedSource;
+        const codeText = isBytecode ? decompiledMethod.bytecodeText : (decompiledMethod.restoredSource || decompiledMethod.liftedSource);
         const lines = codeText.split("\n");
+
+        let javadocOffset = 0;
+        if (!isBytecode && decompiledMethod.restoredSource) {
+            const javadocLines = decompiledMethod.restoredSource.split("\n");
+            for (let i = 0; i < javadocLines.length; i++) {
+                if (javadocLines[i].trim().endsWith("*/")) {
+                    javadocOffset = i + 1;
+                    break;
+                }
+            }
+        }
 
         const cObj = currentScanData.scanResult.classes[className];
         const mObj = cObj ? cObj.methods[methodName] : null;
@@ -471,8 +490,9 @@
         findings.forEach(f => {
             const locLines = f.location.liftedLineNumbers || [];
             locLines.forEach(lNum => {
-                if (!lineFindingsMap[lNum]) lineFindingsMap[lNum] = [];
-                lineFindingsMap[lNum].push(f);
+                const effectiveLine = isBytecode ? lNum : (lNum + javadocOffset);
+                if (!lineFindingsMap[effectiveLine]) lineFindingsMap[effectiveLine] = [];
+                lineFindingsMap[effectiveLine].push(f);
             });
         });
 
@@ -497,7 +517,8 @@
                 lineDiv.classList.add(`line-highlight-${maxSev}`);
 
                 // Target scroll anchor
-                if (targetLine === lineNum) {
+                const effectiveTarget = (!isBytecode && javadocOffset) ? (targetLine + javadocOffset) : targetLine;
+                if (effectiveTarget === lineNum) {
                     lineDiv.classList.add("pulse-target");
                 }
             }

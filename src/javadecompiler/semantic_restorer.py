@@ -238,6 +238,323 @@ class RestorationResult:
     error: Optional[str] = None
 
 
+def infer_semantic_variables(
+    class_name: str,
+    method_name: str,
+    raw_code: str,
+    param_types: Optional[List[str]] = None,
+    os_categories: Optional[List[str]] = None,
+    os_apis: Optional[List[str]] = None,
+    existing: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Infers meaningful, context-aware semantic variable names for generic paramX and varX variables."""
+    if param_types is None:
+        param_types = []
+    if os_categories is None:
+        os_categories = []
+    if os_apis is None:
+        os_apis = []
+
+    m_lower = method_name.lower()
+    c_lower = class_name.lower()
+    has_socket = any("Socket" in api for api in os_apis) or "Network / Sockets" in os_categories or any(k in m_lower for k in ("socket", "connect", "send", "host", "port", "net", "http"))
+    has_file = any("File" in api for api in os_apis) or "File I/O & Storage" in os_categories or any(k in m_lower for k in ("file", "save", "write", "read", "load", "path", "dir", "extract"))
+    has_crypto = any("MessageDigest" in api or "Cipher" in api for api in os_apis) or "Cryptography & Hashing" in os_categories or any(k in m_lower for k in ("hash", "digest", "crypto", "cipher", "secret", "token"))
+    has_sql = any("Connection" in api or "Statement" in api for api in os_apis) or "Database / SQL" in os_categories or any(k in m_lower for k in ("query", "sql", "select", "account", "user", "db"))
+    has_exec = any("Runtime" in api or "Process" in api for api in os_apis) or "Process & OS Execution" in os_categories or any(k in m_lower for k in ("exec", "command", "cmd", "process", "shell"))
+
+    # Filter valid existing renamings (discard identity or generic)
+    renamed: Dict[str, str] = {}
+    if existing:
+        for k, v in existing.items():
+            if not v or not isinstance(v, str):
+                continue
+            v_clean = v.strip()
+            if v_clean == k:
+                continue
+            if re.match(r"^(var|param)\d+$", v_clean):
+                continue
+            renamed[k] = v_clean
+
+    used_names: Set[str] = set(renamed.values())
+
+    def allocate_name(var_key: str, base_name: str) -> str:
+        name = base_name
+        idx = 2
+        while name in used_names:
+            name = f"{base_name}{idx}"
+            idx += 1
+        renamed[var_key] = name
+        used_names.add(name)
+        return name
+
+    # 1. Parameter Renaming
+    sig_params = re.findall(r"\b([\w.$]+(?:\[\])*)\s+(param\d+)\b", raw_code)
+    extracted_types = {p_name: p_type for p_type, p_name in sig_params}
+
+    param_matches = sorted(set(re.findall(r"\bparam\d+\b", raw_code)), key=lambda x: int(x.replace("param", "")))
+    for p_name in param_matches:
+        if p_name in renamed:
+            continue
+        p_idx = int(p_name.replace("param", ""))
+        p_type = extracted_types.get(p_name)
+        if not p_type and p_idx < len(param_types):
+            p_type = param_types[p_idx]
+        if not p_type:
+            p_type = "Object"
+
+        p_type_simple = p_type.split(".")[-1].split("/")[-1]
+
+        # Specific parameter rules
+        if method_name == "main" and ("[]" in p_type_simple or p_type_simple == "String[]"):
+            allocate_name(p_name, "args")
+            continue
+
+        candidate = None
+        # Loop / count context
+        if any(k in m_lower for k in ("sum", "evens", "count", "loop", "calculate")) and p_type_simple == "int" and "health" not in m_lower:
+            candidate = "limit" if p_idx == 0 else "step"
+        # Health / damage context
+        elif "health" in m_lower or "damage" in m_lower:
+            if p_type_simple == "int":
+                candidate = "baseHealth" if p_idx == 0 else "damage"
+        # Math calculation
+        elif any(k in m_lower for k in ("calc", "math", "add", "multiply", "divide", "sub")):
+            if p_type_simple in ("int", "double", "float", "long"):
+                candidate = "a" if p_idx == 0 else "b"
+        # Database / SQL
+        elif p_type_simple == "Connection":
+            candidate = "connection"
+        elif p_type_simple == "Statement":
+            candidate = "statement"
+        elif has_sql and p_type_simple == "String":
+            if any(k in m_lower for k in ("user", "account", "login", "player")):
+                candidate = "userId" if "user" in m_lower else "accountId"
+            elif "query" in m_lower or "sql" in m_lower:
+                candidate = "sqlQuery"
+            else:
+                candidate = "queryParam"
+        # Network
+        elif has_socket and p_type_simple == "String" and p_idx == 0:
+            candidate = "host"
+        elif has_socket and p_type_simple == "int":
+            candidate = "port"
+        # File I/O
+        elif p_type_simple in ("File", "Path"):
+            candidate = "destDir" if any(k in m_lower for k in ("dir", "extract", "folder")) and p_idx == 0 else "targetFile"
+        elif has_file and p_type_simple == "String":
+            if "extract" in m_lower or "zip" in m_lower or "entry" in m_lower:
+                candidate = "fileName"
+            else:
+                candidate = "filePath"
+        # Command / Exec
+        elif has_exec and p_type_simple == "String":
+            candidate = "command"
+        # Crypto
+        elif has_crypto and p_type_simple == "byte[]":
+            candidate = "payload"
+        elif has_crypto and p_type_simple == "String":
+            candidate = "secretKey" if "key" in m_lower else "algorithm"
+
+        # General type fallbacks if no contextual match
+        if not candidate:
+            if p_type_simple == "byte[]":
+                candidate = "data"
+            elif p_type_simple == "int":
+                # Check usage in raw_code
+                if "new Socket(" in raw_code and f", {p_name})" in raw_code:
+                    candidate = "port"
+                elif "while (" in raw_code and (f"< {p_name}" in raw_code or f"<= {p_name}" in raw_code):
+                    candidate = "limit"
+                elif f"sleep({p_name})" in raw_code:
+                    candidate = "timeoutMs"
+                else:
+                    candidate = "value" if p_idx == 0 else "count"
+            elif p_type_simple == "String":
+                if f"new Socket({p_name}" in raw_code:
+                    candidate = "host"
+                elif f"new File({p_name}" in raw_code or (f"new File(" in raw_code and f", {p_name})" in raw_code):
+                    candidate = "filePath"
+                elif "Runtime.getRuntime().exec(" in raw_code:
+                    candidate = "command"
+                elif "SELECT " in raw_code or "accounts" in raw_code:
+                    candidate = "userId"
+                else:
+                    candidate = "inputStr" if p_idx == 0 else "text"
+            elif p_type_simple == "boolean":
+                candidate = "flag"
+            elif p_type_simple in ("InputStream", "FileInputStream"):
+                candidate = "inputStream"
+            elif p_type_simple in ("OutputStream", "FileOutputStream"):
+                candidate = "outputStream"
+            elif p_type_simple in ("Reader", "BufferedReader"):
+                candidate = "reader"
+            elif p_type_simple in ("Writer", "BufferedWriter"):
+                candidate = "writer"
+            elif p_type_simple in ("List", "ArrayList", "Collection"):
+                candidate = "items"
+            elif p_type_simple in ("Map", "HashMap"):
+                candidate = "lookupMap"
+            elif p_type_simple in ("Set", "HashSet"):
+                candidate = "itemSet"
+            else:
+                candidate = p_type_simple[:1].lower() + p_type_simple[1:] if p_type_simple else f"arg{p_idx}"
+
+        allocate_name(p_name, candidate)
+
+    # 2. Local Variable Renaming
+    local_vars = sorted(set(re.findall(r"\bvar\d+\b", raw_code)), key=lambda x: int(x.replace("var", "")))
+    for v_name in local_vars:
+        if v_name in renamed:
+            continue
+
+        candidate = None
+
+        # Check catch block: catch (... v_name)
+        if re.search(r"\bcatch\s*\([^)]*?\b" + re.escape(v_name) + r"\b", raw_code):
+            candidate = "e"
+
+        # Check loop induction / counter
+        # e.g., v_name = 0; ... while (v_name < ... v_name = v_name + 1)
+        is_loop_counter = False
+        if re.search(r"\b" + re.escape(v_name) + r"\s*=\s*0\b", raw_code):
+            if re.search(r"\bwhile\s*\([^)]*?\b" + re.escape(v_name) + r"\b", raw_code):
+                if re.search(r"\b" + re.escape(v_name) + r"\s*=\s*" + re.escape(v_name) + r"\s*\+", raw_code):
+                    is_loop_counter = True
+
+        if is_loop_counter and not candidate:
+            candidate = "i" if "i" not in used_names else ("j" if "j" not in used_names else "k")
+
+        # Check health context
+        if not candidate and ("health" in m_lower or "damage" in m_lower):
+            candidate = "currentHealth"
+
+        # Check accumulator
+        if not candidate and re.search(r"\b" + re.escape(v_name) + r"\s*=\s*" + re.escape(v_name) + r"\s*[\+\-]", raw_code):
+            candidate = "sum" if "sum" in m_lower else "total"
+
+        # Check assignment RHS
+        # Find lines: v_name = <RHS>;
+        rhs_matches = re.findall(r"\b" + re.escape(v_name) + r"\s*=\s*(.+?);", raw_code)
+        if not candidate and rhs_matches:
+            rhs_str = " ".join(rhs_matches)
+
+            # Database / SQL
+            if "createStatement(" in rhs_str:
+                candidate = "statement"
+            elif "prepareStatement(" in rhs_str:
+                candidate = "preparedStatement"
+            elif "executeQuery(" in rhs_str:
+                candidate = "resultSet"
+            elif "executeUpdate(" in rhs_str:
+                candidate = "rowsAffected"
+
+            # StringBuilder / SQL / URL / Path
+            elif "new StringBuilder" in rhs_str or "new StringBuffer" in rhs_str or ".toString()" in rhs_str:
+                if any(k in rhs_str for k in ("SELECT ", "INSERT ", "UPDATE ", "DELETE ", "FROM ", "accounts")):
+                    candidate = "sqlQuery"
+                elif "http://" in rhs_str or "https://" in rhs_str:
+                    candidate = "targetUrl"
+                elif "/" in rhs_str or "\\" in rhs_str:
+                    candidate = "pathBuilder"
+                elif "new StringBuilder" in rhs_str:
+                    candidate = "stringBuilder"
+                else:
+                    candidate = "resultStr"
+
+            # Sockets / Network
+            elif "new Socket(" in rhs_str:
+                candidate = "socket"
+            elif "new ServerSocket(" in rhs_str:
+                candidate = "serverSocket"
+            elif ".accept(" in rhs_str:
+                candidate = "clientSocket"
+            elif ".getInputStream(" in rhs_str:
+                candidate = "socketIn"
+            elif ".getOutputStream(" in rhs_str:
+                candidate = "socketOut"
+            elif "new URL(" in rhs_str:
+                candidate = "targetUrl"
+
+            # File I/O
+            elif "new File(" in rhs_str:
+                candidate = "targetFile"
+            elif "new FileOutputStream(" in rhs_str:
+                candidate = "fileOutStream"
+            elif "new FileInputStream(" in rhs_str:
+                candidate = "fileInStream"
+            elif "new BufferedReader(" in rhs_str:
+                candidate = "bufferedReader"
+            elif "new BufferedWriter(" in rhs_str:
+                candidate = "bufferedWriter"
+            elif ".readLine(" in rhs_str:
+                candidate = "line"
+            elif ".read(" in rhs_str:
+                candidate = "bytesRead"
+
+            # Crypto
+            elif "MessageDigest.getInstance(" in rhs_str:
+                candidate = "digestEngine"
+            elif ".digest(" in rhs_str:
+                candidate = "computedHash"
+            elif "Cipher.getInstance(" in rhs_str:
+                candidate = "cipherEngine"
+            elif ".doFinal(" in rhs_str:
+                candidate = "cipherBytes"
+
+            # Process
+            elif "Runtime.getRuntime(" in rhs_str:
+                candidate = "runtime"
+            elif ".exec(" in rhs_str or "new ProcessBuilder(" in rhs_str:
+                candidate = "process"
+            elif ".waitFor(" in rhs_str or ".exitValue(" in rhs_str:
+                candidate = "exitCode"
+
+            # Parse / Math
+            elif "Integer.parseInt(" in rhs_str:
+                candidate = "parsedInt"
+            elif "Long.parseLong(" in rhs_str:
+                candidate = "parsedLong"
+            elif "Double.parseDouble(" in rhs_str:
+                candidate = "parsedDouble"
+            elif ".split(" in rhs_str:
+                candidate = "tokens"
+            elif ".substring(" in rhs_str:
+                candidate = "subStr"
+            elif ".toLowerCase(" in rhs_str:
+                candidate = "lowerStr"
+            elif ".toUpperCase(" in rhs_str:
+                candidate = "upperStr"
+
+            # Subtraction / Math
+            elif "-" in rhs_str and ("health" in m_lower or "damage" in m_lower):
+                candidate = "currentHealth"
+
+        # Check return statement: return v_name;
+        if not candidate and re.search(r"\breturn\s+" + re.escape(v_name) + r"\s*;", raw_code):
+            if "health" in m_lower:
+                candidate = "currentHealth"
+            elif "sum" in m_lower:
+                candidate = "sum"
+            elif "hash" in m_lower:
+                candidate = "computedHash"
+            else:
+                candidate = "result"
+
+        # Fallback if still unassigned
+        if not candidate:
+            if "health" in m_lower:
+                candidate = "currentHealth"
+            elif "sum" in m_lower:
+                candidate = "total"
+            else:
+                candidate = "value"
+
+        allocate_name(v_name, candidate)
+
+    return renamed
+
+
 class SemanticRestorer:
     """Handles prompt construction, Ollama queries, and offline heuristic fallback."""
 
@@ -245,7 +562,7 @@ class SemanticRestorer:
         self,
         model: str = "qwen2.5-coder:14b",
         host: str = "http://localhost:11434",
-        timeout: int = 15,
+        timeout: int = 45,
         no_llm: bool = False,
     ) -> None:
         self.model = model
@@ -285,9 +602,15 @@ Raw Decompiled Pseudo-Code:
 
 Instructions:
 1. Identify all generic placeholder variables like `var0`, `var1`, `var2`, `param0`, `param1`.
-2. Infer meaningful, descriptive camelCase names for them based on their mathematical/logical purpose and OS API usage (e.g., `param0` -> `targetHost`, `var1` -> `healthTotal`, `var2` -> `hashDigest`).
+2. Infer meaningful, descriptive camelCase names for EVERY SINGLE generic variable based on its mathematical/logical purpose, type, and OS API usage:
+   - NEVER keep generic placeholders like `var0`, `var1`, `param0` in your output.
+   - For loops/counters: use `i`, `index`, `count`, `limit`.
+   - For accumulators/results: use `sum`, `total`, `result`, `retVal`.
+   - For DB/SQL: use `connection`, `statement`, `sqlQuery`, `resultSet`, `userId`.
+   - For Network/IO: use `socket`, `targetFile`, `fileOutStream`, `buffer`, `payload`, `filePath`.
+   - For Strings: infer from intent (e.g., `userName`, `queryParam`, `rawInput`, `line`).
 3. Write a concise, professional Javadoc comment explaining what the method computes or executes, including its OS interactions.
-4. Output the complete reconstructed Java method with the Javadoc prepended and all generic variables cleanly substituted.
+4. Output the complete reconstructed Java method with the Javadoc prepended and all generic variables cleanly substituted. Every single variable in the reconstructed code MUST have a semantic name.
 
 Return ONLY a valid JSON object matching this schema:
 {{
@@ -354,18 +677,61 @@ Return ONLY a valid JSON object matching this schema:
                 if not data:
                     return None
 
-                renamed = data.get("renamed_variables", {})
-                if not isinstance(renamed, dict):
-                    renamed = {}
+                raw_renamed = data.get("renamed_variables", {})
+                if not isinstance(raw_renamed, dict):
+                    raw_renamed = {}
+
+                # Filter out identity mappings or generic names from LLM
+                renamed: Dict[str, str] = {}
+                for k, v in raw_renamed.items():
+                    if isinstance(k, str) and isinstance(v, str):
+                        k_clean = k.strip()
+                        v_clean = v.strip()
+                        if k_clean and v_clean and k_clean != v_clean and not re.match(r"^(var|param)\d+$", v_clean):
+                            renamed[k_clean] = v_clean
 
                 javadoc = stripMarkdownFences(data.get("javadoc", "")).strip()
                 reconstructed = stripMarkdownFences(data.get("reconstructed_code", "")).strip()
 
+                m_info = class_info.methods.get(method_name)
+                param_types = m_info.param_types if m_info else []
+
                 # Guard against empty, whitespace, or hallucinated output
                 if not reconstructed or method_name not in reconstructed:
+                    # Fill missing variables with heuristic inference
+                    renamed = infer_semantic_variables(
+                        class_name=class_info.class_name,
+                        method_name=method_name,
+                        raw_code=raw_code,
+                        param_types=param_types,
+                        os_categories=os_context.categories,
+                        os_apis=os_context.apis_invoked,
+                        existing=renamed,
+                    )
                     reconstructed = self._applyRenaming(raw_code, renamed)
                     if javadoc:
                         reconstructed = f"{javadoc}\n{reconstructed}"
+                else:
+                    # LLM provided reconstructed code
+                    # 1. First ensure all renamed variables are applied to reconstructed
+                    if renamed:
+                        reconstructed = self._applyRenaming(reconstructed, renamed)
+
+                    # 2. Check if reconstructed code still contains any generic var\d+ or param\d+
+                    has_leftover_generics = bool(re.search(r"\b(var\d+|param\d+)\b", reconstructed))
+                    if has_leftover_generics:
+                        # Infer good names for the remaining generic variables
+                        additional = infer_semantic_variables(
+                            class_name=class_info.class_name,
+                            method_name=method_name,
+                            raw_code=reconstructed,
+                            param_types=param_types,
+                            os_categories=os_context.categories,
+                            os_apis=os_context.apis_invoked,
+                            existing=renamed,
+                        )
+                        renamed.update(additional)
+                        reconstructed = self._applyRenaming(reconstructed, additional)
 
                 return RestorationResult(
                     method_name=method_name,
@@ -385,54 +751,19 @@ Return ONLY a valid JSON object matching this schema:
         os_context: OSContext,
     ) -> RestorationResult:
         """Deterministically recovers variable names and generates Javadoc when LLM is unavailable."""
-        mInfo = class_info.methods.get(method_name)
-        renamed: Dict[str, str] = {}
+        m_info = class_info.methods.get(method_name)
+        param_types = m_info.param_types if m_info else []
 
-        # 1. Parameter heuristic renaming
-        has_socket = any("Socket" in api for api in os_context.apis_invoked) or "Network / Sockets" in os_context.categories
-        has_file = any("File" in api for api in os_context.apis_invoked) or "File I/O & Storage" in os_context.categories
-        has_crypto = any("MessageDigest" in api or "Cipher" in api for api in os_context.apis_invoked) or "Cryptography & Hashing" in os_context.categories
+        renamed = infer_semantic_variables(
+            class_name=class_info.class_name,
+            method_name=method_name,
+            raw_code=raw_code,
+            param_types=param_types,
+            os_categories=os_context.categories,
+            os_apis=os_context.apis_invoked,
+        )
 
-        if mInfo:
-            for i, pType in enumerate(mInfo.param_types):
-                oldName = f"param{i}"
-                if method_name == "main" and "[]" in pType:
-                    renamed[oldName] = "args"
-                elif method_name in ("sumUpTo", "sumEvens", "calculateSum") and pType == "int":
-                    renamed[oldName] = "limit"
-                elif "Health" in method_name and pType == "int":
-                    renamed[oldName] = "baseHealth" if i == 0 else "damage"
-                elif has_socket and pType == "String" and i == 0:
-                    renamed[oldName] = "host"
-                elif has_socket and pType == "int":
-                    renamed[oldName] = "port"
-                elif has_file and pType == "String":
-                    renamed[oldName] = "filePath"
-                elif pType == "byte[]":
-                    renamed[oldName] = "data" if not has_crypto else "payload"
-                else:
-                    renamed[oldName] = f"{pType.lower().replace('[]', 'Array')}{i}"
-
-        # 2. Local variable heuristic renaming based on usage
-        if "sum" in method_name.lower():
-            renamed["var1"] = "sum"
-            renamed["var2"] = "i"
-        elif "Health" in method_name:
-            renamed["var2"] = "currentHealth"
-        
-        for varMatch in re.findall(r"\bvar\d+\b", raw_code):
-            if f"{varMatch} = new Socket" in raw_code:
-                renamed[varMatch] = "socket"
-            elif f"{varMatch} = MessageDigest" in raw_code:
-                renamed[varMatch] = "digestEngine"
-            elif f"{varMatch} = new File(" in raw_code or f"{varMatch} = new File;" in raw_code:
-                renamed[varMatch] = "targetFile"
-            elif f"{varMatch} = new FileOutputStream" in raw_code:
-                renamed[varMatch] = "fileOutStream"
-            elif "digest(" in raw_code and f"{varMatch} = " in raw_code and "digestEngine" in renamed.values():
-                renamed[varMatch] = "computedHash"
-
-        # 3. Generate structured Javadoc
+        # Generate structured Javadoc
         docLines = ["/**", f" * Decompiled method: {method_name}"]
         if os_context.categories:
             docLines.append(" *")
@@ -446,7 +777,7 @@ Return ONLY a valid JSON object matching this schema:
         docLines.append(" */")
         javadoc = "\n".join(docLines)
 
-        # 4. Substitute variables into raw code
+        # Substitute variables into raw code
         reconstructed = self._applyRenaming(raw_code, renamed)
         final_code = f"{javadoc}\n{reconstructed}"
 

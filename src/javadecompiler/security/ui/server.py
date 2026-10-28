@@ -35,6 +35,11 @@ from javadecompiler.security.jar_checks import inspect_jar_archive, safe_parse_c
 from javadecompiler.disassembler import disassembleMethod
 from javadecompiler.lifter import liftMethod
 from javadecompiler.report import generateHtmlReport
+from javadecompiler.semantic_restorer import (
+    RestorationResult,
+    SemanticRestorer,
+    extractOsContext,
+)
 from javadecompiler.security import TOOL_VERSION
 from javadecompiler.security.models import ScanResult
 from javadecompiler.security.reporting.sarif import to_sarif
@@ -312,11 +317,33 @@ class UiServerHandler(BaseHTTPRequestHandler):
                         "bytecodeText": bc_text,
                     }
 
+            # Phase 3: Semantic variable recovery
+            restorer = SemanticRestorer(
+                model=audit_model,
+                no_llm=not enable_llm,
+                timeout=30,
+            )
+            restored_methods_dict: Dict[str, Dict[str, RestorationResult]] = {}
+            for c_info in classes:
+                c_name = c_info.class_name
+                restored_methods_dict[c_name] = {}
+                for m_name, raw_code in raw_methods_dict.get(c_name, {}).items():
+                    try:
+                        rest_res = restorer.restoreMethod(c_info, m_name, raw_code)
+                    except Exception:
+                        rest_res = restorer._heuristicFallback(
+                            c_info, m_name, raw_code, extractOsContext(c_info, m_name, raw_code)
+                        )
+                    restored_methods_dict[c_name][m_name] = rest_res
+                    if c_name in decompiled_data and m_name in decompiled_data[c_name]:
+                        decompiled_data[c_name][m_name]["restoredSource"] = rest_res.reconstructed_code
+                        decompiled_data[c_name][m_name]["renamedVars"] = rest_res.renamed_variables
+
             # HTML & SARIF reports
             html_report = generateHtmlReport(
                 classes=classes,
                 raw_methods=raw_methods_dict,
-                restored_methods={},
+                restored_methods=restored_methods_dict,
                 target_name=file_name,
                 scan_result=scan_res,
             )
