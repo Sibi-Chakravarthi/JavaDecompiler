@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict
+from typing import Any, List, Tuple, Dict
 
 jvmOpcodes: Dict[int, Tuple[str, int]] = {
 
@@ -141,8 +141,8 @@ jvmOpcodes: Dict[int, Tuple[str, int]] = {
 
 
 
-def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str,any]]:
-    instructions: List[Dict[str, any]] = []
+def disassembleMethod(methodName: str, rawBytecode: bytes) -> List[Dict[str, Any]]:
+    instructions: List[Dict[str, Any]] = []
     currentOffset: int = 0
     codeLength: int = len(rawBytecode)
 

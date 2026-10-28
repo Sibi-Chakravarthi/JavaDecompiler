@@ -1,20 +1,20 @@
 [project]
 name = "javadecompiler"
 version = "0.1.0"
-description = "Add your description here"
+description = "NeuroDecomp: AI-powered Java bytecode decompiler and semantic restorer"
 readme = "README.md"
 authors = [
     { name = "Sibi Chakravarthi", email = "sibichakravarthima31@gmail.com" }
 ]
 requires-python = ">=3.10"
-dependencies = [
-    "dataclasses>=0.8",
-    "typing>=3.10.0.0",
-]
+# NeuroDecomp is built entirely on the Python standard library
+# (struct, io, zipfile, urllib, dataclasses, typing). No runtime
+# third-party dependencies are required.
+dependencies = []
 
 [project.scripts]
 javadecompiler = "javadecompiler:main"
 
 [build-system]
-requires = ["uv_build>=0.12.10,<0.13.0"]
+requires = ["uv_build>=0.13.6,<0.14.0"]
 build-backend = "uv_build"

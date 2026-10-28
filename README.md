@@ -148,6 +148,9 @@ cd JavaDecompiler
 uv sync
 ```
 
+> For a full step-by-step install/verify guide (including JDK fixture compilation,
+> Ollama setup, and troubleshooting), see [`howtorun.md`](howtorun.md).
+
 ---
 
 ## 5. Usage & CLI
@@ -214,6 +217,9 @@ options:
 JavaDecompiler/
 ├── pyproject.toml              # Project dependencies and CLI entry point
 ├── README.md                   # Project documentation (this project).
+├── howtorun.md                 # Step-by-step setup, run & troubleshooting guide
+├── scripts/
+│   └── build_fixtures.py       # Compiles Java test fixtures + sample_library.jar
 ├── NeuroDecomp_Revised.md      # Architecture specification & roadmap
 ├── src/
 │   └── javadecompiler/
@@ -247,6 +253,9 @@ JavaDecompiler/
 Run the full automated test suite using `uv`:
 
 ```bash
+# Test fixtures ship as .java sources only; compile them once (requires a JDK)
+uv run python scripts/build_fixtures.py
+
 uv run python -m unittest discover tests
 ```
 
