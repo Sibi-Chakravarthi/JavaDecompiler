@@ -60,11 +60,17 @@ class LlmAuditorHarness:
         scope: str = "suspicious",
         enable_cache: bool = True,
         prompt_version: str = "1.0.0",
+        votes: int = 1,
+        investigate: bool = False,
+        call_graph: Optional[Any] = None,
     ) -> None:
         self.client = client or OllamaClient()
         self.cache = cache or LlmDiskCache(enabled=enable_cache)
         self.scope = scope  # "suspicious" | "all"
         self.prompt_version = prompt_version
+        self.votes = max(1, votes)
+        self.investigate = investigate
+        self.call_graph = call_graph
         self.stats = LlmStats(
             enabled=True,
             model=getattr(self.client, "model_name", "qwen2.5-coder:14b"),
@@ -105,6 +111,27 @@ class LlmAuditorHarness:
             # Cross-method synthesis if multiple methods audited
             if len(c_analysis.methods) > 1 and len(target_method_names) > 0:
                 self._run_synthesis(c_info, c_analysis)
+
+            # Bounded Investigator loop if enabled
+            if self.investigate:
+                try:
+                    from javadecompiler.security.llm.investigator import BoundedInvestigator
+                    for m_name in target_method_names:
+                        investigator = BoundedInvestigator(
+                            client=self.client,
+                            classes=classes,
+                            raw_methods=raw_methods,
+                            call_graph=self.call_graph,
+                            static_findings=scan_result.allFindings,
+                            max_steps=8,
+                        )
+                        inv_res = investigator.investigate(class_name, m_name)
+                        self.stats.investigationTraces.extend(inv_res.traces)
+                        m_analysis = c_analysis.methods.get(m_name)
+                        if m_analysis and inv_res.findings:
+                            m_analysis.findings.extend(inv_res.findings)
+                except Exception:
+                    pass
 
         # Update final stats
         self.stats.calls = getattr(self.client, "call_count", self.stats.calls)
@@ -290,8 +317,61 @@ class LlmAuditorHarness:
             if ground_res.status == "dropped":
                 self.stats.ungroundedDropped += 1
             elif ground_res.grounded_finding:
-                # Append grounded finding to method analysis
-                m_analysis.findings.append(ground_res.grounded_finding)
+                gf = ground_res.grounded_finding
+                # Run Adversarial Verifier pass for severity >= medium
+                if gf.severity in (Severity.MEDIUM.value, Severity.HIGH.value, Severity.CRITICAL.value):
+                    verdict = self._verify_finding(gf, c_info, m_name, raw_code)
+                    gf.verifierVerdict = verdict
+                    if verdict == "refuted":
+                        self.stats.verifierRefuted += 1
+                        continue  # Drop refuted finding
+                # Append confirmed/unrefuted grounded finding to method analysis
+                m_analysis.findings.append(gf)
+
+    def _verify_finding(
+        self,
+        finding: Finding,
+        c_info: ClassInfo,
+        m_name: str,
+        raw_code: str,
+    ) -> str:
+        """Executes adversarial Devil's Advocate verification pass with majority voting."""
+        template = load_prompt_template("verify")
+        if not template:
+            return "confirmed"
+
+        evidence_summary = ", ".join(f"[{e.type}] {e.text}" for e in finding.evidence)
+        boundary = generate_boundary()
+        prompt = template.format(
+            boundary=boundary,
+            rule_id=finding.ruleId,
+            title=finding.title,
+            severity=finding.severity,
+            evidence_summary=evidence_summary or "None",
+            rationale=finding.llmRationale or finding.description,
+            class_name=sanitize_untrusted_text(c_info.class_name),
+            method_name=sanitize_untrusted_text(m_name),
+            method_code=sanitize_untrusted_text(raw_code, boundary=boundary),
+        )
+
+        votes_count = max(1, self.votes)
+        verdict_counts: Dict[str, int] = {"confirmed": 0, "refuted": 0, "inconclusive": 0}
+
+        for _ in range(votes_count):
+            try:
+                reply = self.client.generate(prompt, format_json=True)
+                self.stats.calls += 1
+                data = json.loads(reply)
+                v = str(data.get("verdict", "confirmed")).lower()
+                if v in verdict_counts:
+                    verdict_counts[v] += 1
+                else:
+                    verdict_counts["confirmed"] += 1
+            except Exception:
+                verdict_counts["inconclusive"] += 1
+
+        # Return majority verdict
+        return max(verdict_counts, key=lambda k: verdict_counts[k])
 
     def _run_synthesis(self, c_info: ClassInfo, c_analysis: ClassAnalysis) -> None:
         """Executes cross-method synthesis for multi-method attack chains."""

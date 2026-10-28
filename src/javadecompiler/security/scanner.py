@@ -246,7 +246,51 @@ class SecurityScanner:
                 findings=class_findings,
             )
 
-        # 4. Filter by min_severity if configured
+        # 4. Optional Layer C: LLM Auditor Harness
+        llm_stats = LlmStats(
+            enabled=self.enable_llm,
+            model=self.audit_model,
+        )
+
+        if self.enable_llm:
+            try:
+                from javadecompiler.security.llm.client import OllamaClient
+                from javadecompiler.security.llm.harness import LlmAuditorHarness
+                client = OllamaClient(model_name=self.audit_model)
+                harness = LlmAuditorHarness(
+                    client=client,
+                    scope=self.llm_scope,
+                    enable_cache=not self.no_cache,
+                    votes=self.llm_votes,
+                    investigate=self.llm_investigate,
+                    call_graph=call_graph,
+                )
+                temp_scan_result = ScanResult(
+                    classes=class_analyses,
+                    jarFindings=jar_findings,
+                )
+                raw_methods_dict = {
+                    c.class_name: {m: raw_lifted_methods.get(m, "") for m in c.methods}
+                    for c in classes
+                }
+                temp_scan_result = harness.run_audit(
+                    scan_result=temp_scan_result,
+                    classes=classes,
+                    raw_methods=raw_methods_dict,
+                )
+                llm_stats = temp_scan_result.llmStats
+
+                # Recalculate method and class scores after LLM findings
+                for c in class_analyses.values():
+                    c_findings_all = list(c.findings)
+                    for m in c.methods.values():
+                        m.riskScore = calculate_risk_score(m.findings)
+                        c_findings_all.extend(m.findings)
+                    c.riskScore = calculate_risk_score(c_findings_all)
+            except Exception as e:
+                limitations.append(f"LLM Auditor error: {e}")
+
+        # 5. Filter by min_severity if configured
         sev_rank = {
             Severity.INFO.value: 1,
             Severity.LOW.value: 2,
@@ -283,11 +327,6 @@ class SecurityScanner:
             partialCoverageMethods=partial_coverage_methods,
             failedMethods=failed_methods,
             limitations=limitations,
-        )
-
-        llm_stats = LlmStats(
-            enabled=self.enable_llm,
-            model=self.audit_model,
         )
 
         return ScanResult(
