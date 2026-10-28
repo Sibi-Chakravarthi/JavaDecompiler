@@ -1,0 +1,128 @@
+"""
+test_ui_server.py — Unit and integration tests for the Interactive Web UI HTTP server.
+"""
+
+import base64
+import json
+import threading
+import time
+import unittest
+import urllib.error
+import urllib.request
+from http.server import HTTPServer
+from pathlib import Path
+
+from javadecompiler.security.ui.server import UiServerHandler
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+COMPILED_DIR = BASE_DIR / "tests" / "security_corpus" / "compiled"
+
+
+class TestUiServer(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        # Pick an arbitrary available port for testing
+        cls.server = HTTPServer(("127.0.0.1", 0), UiServerHandler)
+        cls.port = cls.server.server_address[1]
+        cls.base_url = f"http://127.0.0.1:{cls.port}"
+
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        time.sleep(0.1)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_get_index(self):
+        req = urllib.request.Request(f"{self.base_url}/")
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get_content_type(), "text/html")
+            body = resp.read().decode("utf-8")
+            self.assertIn("NeuroDecomp", body)
+            self.assertIn("Drag &amp; Drop", body)
+
+    def test_get_static_assets(self):
+        # styles.css
+        req_css = urllib.request.Request(f"{self.base_url}/styles.css")
+        with urllib.request.urlopen(req_css) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get_content_type(), "text/css")
+            self.assertIn(":root", resp.read().decode("utf-8"))
+
+        # app.js
+        req_js = urllib.request.Request(f"{self.base_url}/app.js")
+        with urllib.request.urlopen(req_js) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get_content_type(), "application/javascript")
+            self.assertIn("uploadFile", resp.read().decode("utf-8"))
+
+    def test_get_health(self):
+        req = urllib.request.Request(f"{self.base_url}/api/health")
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(data["status"], "ok")
+            self.assertIn("toolVersion", data)
+            self.assertIn("ollamaReachable", data)
+
+    def test_post_scan_valid_class(self):
+        # Use compiled MathUtils.class
+        sample_path = COMPILED_DIR / "benign" / "MathUtils.class"
+        if not sample_path.exists():
+            self.skipTest(f"{sample_path} not found")
+
+        file_bytes = sample_path.read_bytes()
+        file_b64 = base64.b64encode(file_bytes).decode("ascii")
+
+        payload = {
+            "fileName": "MathUtils.class",
+            "fileBase64": file_b64,
+            "options": {"enableLlm": False},
+        }
+
+        req = urllib.request.Request(
+            f"{self.base_url}/api/scan",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            result = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(result["success"])
+            self.assertEqual(result["targetName"], "MathUtils.class")
+            self.assertIn("scanResult", result)
+            self.assertIn("decompiled", result)
+            self.assertIn("htmlReport", result)
+            self.assertIn("sarifReport", result)
+            self.assertGreater(result["executionTimeMs"], 0)
+
+            # Check decompiled structure
+            self.assertIn("benign/MathUtils", result["decompiled"])
+            self.assertIn("add", result["decompiled"]["benign/MathUtils"])
+
+    def test_post_scan_invalid_empty(self):
+        req = urllib.request.Request(
+            f"{self.base_url}/api/scan",
+            data=b"",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        self.assertEqual(ctx.exception.code, 400)
+
+    def test_not_found(self):
+        req = urllib.request.Request(f"{self.base_url}/nonexistent")
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        self.assertEqual(ctx.exception.code, 404)
+
+
+if __name__ == "__main__":
+    unittest.main()

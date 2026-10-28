@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuroDecomp — Security Auditor & Decompiler Web UI</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="app-header">
+        <div class="logo-area">
+            <div class="logo-icon">&#x26E8;</div>
+            <div class="logo-text">
+                <h1>NeuroDecomp <span class="badge badge-version">v0.1.0</span></h1>
+                <p>Interactive Bytecode Decompiler & Security Auditor</p>
+            </div>
+        </div>
+        <div class="header-controls">
+            <div id="ollama-status" class="ollama-status checking">
+                <span class="status-dot"></span>
+                <span id="ollama-status-text">Checking Ollama...</span>
+            </div>
+            <label class="toggle-control">
+                <input type="checkbox" id="toggle-llm">
+                <span>LLM Deep Audit (qwen2.5-coder:14b)</span>
+            </label>
+            <label class="toggle-control">
+                <input type="checkbox" id="toggle-investigate">
+                <span>Agentic Investigator</span>
+            </label>
+        </div>
+    </header>
+
+    <div id="drop-zone" class="drop-zone">
+        <div class="drop-content">
+            <div class="drop-icon">&#x21EA;</div>
+            <h2>Drag &amp; Drop Java Binary Here</h2>
+            <p>Supports compiled <code>.class</code> files or complete <code>.jar</code> archives</p>
+            <div class="drop-actions">
+                <button type="button" class="btn btn-primary" id="btn-browse">Browse File</button>
+                <input type="file" id="file-input" accept=".class,.jar" style="display: none;">
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Banner (hidden until scan complete) -->
+    <section id="summary-section" class="summary-section hidden">
+        <div class="summary-card">
+            <div class="summary-header">
+                <div>
+                    <span class="meta-label">TARGET BINARY</span>
+                    <h2 id="target-name-display">Target.jar</h2>
+                </div>
+                <div class="summary-verdict-box">
+                    <span id="verdict-badge" class="verdict-badge">CLEAN</span>
+                </div>
+            </div>
+
+            <div class="summary-metrics-grid">
+                <div class="metric-card">
+                    <span class="metric-label">OVERALL RISK SCORE</span>
+                    <div id="risk-score-display" class="metric-value">0.0 <span class="metric-sub">/ 100</span></div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">ANALYSIS COVERAGE</span>
+                    <div id="coverage-display" class="metric-value">FULL</div>
+                    <span id="coverage-sub" class="metric-sub">All methods lifted</span>
+                </div>
+                <div class="metric-card metric-reasons">
+                    <span class="metric-label">AUDIT RATIONALE</span>
+                    <ul id="reasons-list"></ul>
+                </div>
+            </div>
+
+            <div class="export-actions">
+                <button class="btn btn-secondary" id="btn-export-json">Export JSON</button>
+                <button class="btn btn-secondary" id="btn-export-sarif">Export SARIF 2.1.0</button>
+                <button class="btn btn-secondary" id="btn-export-html">Download HTML Report</button>
+                <button class="btn btn-outline" id="btn-reset">Scan Another File</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3-Pane Main View -->
+    <main id="ide-container" class="ide-container hidden">
+        <!-- Left Pane: Class & Method Explorer -->
+        <aside class="pane explorer-pane">
+            <div class="pane-header">
+                <h3>Explorer</h3>
+                <span id="class-count-badge" class="badge">0 classes</span>
+            </div>
+            <div class="pane-search">
+                <input type="text" id="explorer-search" placeholder="Filter classes and methods...">
+            </div>
+            <div id="tree-container" class="tree-container">
+                <!-- Dynamically populated -->
+            </div>
+        </aside>
+
+        <!-- Center Pane: Code Viewer -->
+        <section class="pane code-pane">
+            <div class="pane-header code-header">
+                <div class="code-title-group">
+                    <span id="active-method-title" class="active-method-title">Select a method from the Explorer</span>
+                    <span id="active-method-descriptor" class="active-method-desc"></span>
+                </div>
+                <div class="view-tabs">
+                    <button class="tab-btn active" id="tab-decompiled">Decompiled Java</button>
+                    <button class="tab-btn" id="tab-bytecode">Bytecode &amp; CFG</button>
+                </div>
+            </div>
+            <div class="code-viewport" id="code-viewport">
+                <div class="line-numbers" id="line-numbers"></div>
+                <div class="code-lines" id="code-lines">
+                    <div class="code-empty-state">Select a class and method from the left Explorer pane to view decompiled source and inline security findings.</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Pane: Findings Inspector -->
+        <aside class="pane inspector-pane">
+            <div class="pane-header">
+                <h3>Findings Inspector</h3>
+                <span id="findings-count-badge" class="badge">0 findings</span>
+            </div>
+            <div class="severity-filters">
+                <button class="filter-chip active" data-filter="all">All</button>
+                <button class="filter-chip chip-critical" data-filter="critical">Critical</button>
+                <button class="filter-chip chip-high" data-filter="high">High</button>
+                <button class="filter-chip chip-medium" data-filter="medium">Medium</button>
+                <button class="filter-chip chip-low" data-filter="low">Low</button>
+            </div>
+            <div id="findings-list" class="findings-list">
+                <div class="empty-findings">No security findings or vulnerabilities detected for the active selection.</div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- Loading Modal -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="loading-card">
+            <div class="spinner"></div>
+            <h3 id="loading-text">Decompiling and Auditing Binary...</h3>
+            <p>Phase 1-3 Decompilation &bull; Layer A-C Security Scan</p>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
