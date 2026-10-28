@@ -249,7 +249,16 @@ def safe_parse_class_bytes(
         expected_suffix = class_info.class_name.replace(".", "/") + ".class"
         # Normalize slashes
         norm_file = file_name.replace("\\", "/")
-        if not norm_file.endswith(expected_suffix) and not norm_file.startswith("BOOT-INF/") and not norm_file.startswith("WEB-INF/"):
+        if "/" not in norm_file:
+            mismatched = norm_file != os.path.basename(expected_suffix)
+        else:
+            mismatched = (
+                not norm_file.endswith(expected_suffix)
+                and not norm_file.startswith("BOOT-INF/")
+                and not norm_file.startswith("WEB-INF/")
+            )
+
+        if mismatched:
             ev = Evidence(
                 id="CP:NAME",
                 type="constantPool",

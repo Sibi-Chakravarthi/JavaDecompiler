@@ -1,0 +1,282 @@
+{
+  "description": "Ground truth evaluation manifest for NeuroDecomp Phase 4 Security Auditor",
+  "classes": {
+    "benign/MathUtils": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/StringUtils": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/SafeDao": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/SafeCrypto": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/SafePathReader": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/BenignClinit": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/HarmlessProcess": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/CollectionHelper": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/SafeParser": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/Base64Codec": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/UserEntity": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/FileLogger": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/NetworkHealthCheck": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/ConfigLoader": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "benign/SafeSerialization": {
+      "category": "benign",
+      "expectedVerdict": "CLEAN",
+      "methods": {}
+    },
+    "vulnerable/VulnCommandExec": {
+      "category": "execution",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-EXEC-001"
+      ]
+    },
+    "vulnerable/VulnSqlInjection": {
+      "category": "injection",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-INJ-001"
+      ]
+    },
+    "vulnerable/VulnDeserialization": {
+      "category": "deserialization",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-DESER-001"
+      ]
+    },
+    "vulnerable/VulnWeakDigest": {
+      "category": "crypto",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-CRYP-001"
+      ]
+    },
+    "vulnerable/VulnWeakCipher": {
+      "category": "crypto",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-CRYP-002"
+      ]
+    },
+    "vulnerable/VulnEcbCipher": {
+      "category": "crypto",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-CRYP-002"
+      ]
+    },
+    "vulnerable/VulnTrustAllTls": {
+      "category": "crypto",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-CRYP-005"
+      ]
+    },
+    "vulnerable/VulnPermissiveHost": {
+      "category": "crypto",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-CRYP-005"
+      ]
+    },
+    "vulnerable/VulnHardcodedAws": {
+      "category": "secrets",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-SEC-001"
+      ]
+    },
+    "vulnerable/VulnHardcodedPem": {
+      "category": "secrets",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-SEC-001"
+      ]
+    },
+    "vulnerable/VulnPathTraversal": {
+      "category": "injection",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-INJ-002"
+      ]
+    },
+    "vulnerable/VulnXxe": {
+      "category": "injection",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-INJ-003"
+      ]
+    },
+    "vulnerable/VulnJndiLookup": {
+      "category": "dynamic_loading",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-DYN-003"
+      ]
+    },
+    "vulnerable/VulnInsecureRandom": {
+      "category": "crypto",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-CRYP-004"
+      ]
+    },
+    "vulnerable/VulnReflection": {
+      "category": "dynamic_loading",
+      "expectedVerdict": "VULNERABLE",
+      "expectedRules": [
+        "JD-DYN-001"
+      ]
+    },
+    "suspicious/SuspiciousRevShell": {
+      "category": "execution",
+      "expectedVerdict": "LIKELY_MALICIOUS",
+      "expectedRules": [
+        "JD-CHAIN-REVSHELL",
+        "JD-NET-001",
+        "JD-EXEC-001"
+      ]
+    },
+    "suspicious/SuspiciousDropper": {
+      "category": "execution",
+      "expectedVerdict": "LIKELY_MALICIOUS",
+      "expectedRules": [
+        "JD-CHAIN-DROPPER",
+        "JD-NET-001",
+        "JD-EXEC-001"
+      ]
+    },
+    "suspicious/SuspiciousDecodeExec": {
+      "category": "evasion",
+      "expectedVerdict": "LIKELY_MALICIOUS",
+      "expectedRules": [
+        "JD-CHAIN-DECODE-EXEC",
+        "JD-EVA-002",
+        "JD-EXEC-001"
+      ]
+    },
+    "suspicious/SuspiciousExfil": {
+      "category": "network",
+      "expectedVerdict": "LIKELY_MALICIOUS",
+      "expectedRules": [
+        "JD-CHAIN-EXFIL",
+        "JD-NET-001",
+        "JD-SYS-002"
+      ]
+    },
+    "suspicious/SuspiciousTimeBomb": {
+      "category": "evasion",
+      "expectedVerdict": "SUSPICIOUS",
+      "expectedRules": [
+        "JD-CHAIN-TIMEBOMB",
+        "JD-EVA-004",
+        "JD-EXEC-001"
+      ]
+    },
+    "suspicious/SuspiciousClinitTrigger": {
+      "category": "loadtime",
+      "expectedVerdict": "SUSPICIOUS",
+      "expectedRules": [
+        "JD-CHAIN-CLINIT",
+        "JD-LOAD-001",
+        "JD-NET-001"
+      ]
+    },
+    "suspicious/SuspiciousXorDecryptor": {
+      "category": "evasion",
+      "expectedVerdict": "SUSPICIOUS",
+      "expectedRules": [
+        "JD-EVA-001",
+        "JD-EXEC-001"
+      ]
+    },
+    "suspicious/SuspiciousDebuggerCheck": {
+      "category": "evasion",
+      "expectedVerdict": "SUSPICIOUS",
+      "expectedRules": [
+        "JD-EVA-003"
+      ]
+    },
+    "suspicious/SuspiciousShutdownHook": {
+      "category": "system",
+      "expectedVerdict": "SUSPICIOUS",
+      "expectedRules": [
+        "JD-SYS-001"
+      ]
+    },
+    "suspicious/SuspiciousRecon": {
+      "category": "system",
+      "expectedVerdict": "SUSPICIOUS",
+      "expectedRules": [
+        "JD-SYS-002"
+      ]
+    },
+    "suspicious/SuspiciousNativeLoad": {
+      "category": "native",
+      "expectedVerdict": "SUSPICIOUS",
+      "expectedRules": [
+        "JD-SYS-001"
+      ]
+    },
+    "suspicious/SuspiciousPromptInjection": {
+      "category": "evasion",
+      "expectedVerdict": "SUSPICIOUS",
+      "expectedRules": [
+        "JD-EVA-005"
+      ]
+    }
+  }
+}

@@ -1,0 +1,611 @@
+{
+  "configName": "static-only",
+  "totalClasses": 42,
+  "benignClasses": 15,
+  "precision": 0.9615,
+  "recall": 0.9259,
+  "f1": 0.9434,
+  "benignFpr": 0.0667,
+  "verdictAccuracy": 0.881,
+  "groundingRate": 1.0,
+  "ungroundedDropped": 0,
+  "promptInjectionResilience": {
+    "detectedRule": true,
+    "suppressionFailed": true,
+    "resilient": true
+  },
+  "perCategory": {
+    "benign": {
+      "tp": 0,
+      "fp": 1,
+      "fn": 0,
+      "tn": 14
+    },
+    "loadtime": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "evasion": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "execution": {
+      "tp": 3,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "network": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "native": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "system": {
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "deserialization": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "crypto": {
+      "tp": 6,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "secrets": {
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0
+    },
+    "dynamic_loading": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 1,
+      "tn": 0
+    },
+    "injection": {
+      "tp": 2,
+      "fp": 0,
+      "fn": 1,
+      "tn": 0
+    }
+  },
+  "elapsedSeconds": 0.06,
+  "latencyPerClassMs": 1.48,
+  "classResults": [
+    {
+      "classKey": "benign/Base64Codec",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/BenignClinit",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/CollectionHelper",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/ConfigLoader",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/FileLogger",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/HarmlessProcess",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 36.0,
+      "expectedRules": [],
+      "foundRules": [
+        "JD-EXEC-001"
+      ],
+      "findingsCount": 2
+    },
+    {
+      "classKey": "benign/MathUtils",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/NetworkHealthCheck",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/SafeCrypto",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/SafeDao",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/SafeParser",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/SafePathReader",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/SafeSerialization",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/StringUtils",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "benign/UserEntity",
+      "expectedVerdict": "CLEAN",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "suspicious/SuspiciousClinitTrigger",
+      "expectedVerdict": "SUSPICIOUS",
+      "actualVerdict": "LIKELY_MALICIOUS",
+      "riskScore": 82.3,
+      "expectedRules": [
+        "JD-NET-001",
+        "JD-CHAIN-CLINIT",
+        "JD-LOAD-001"
+      ],
+      "foundRules": [
+        "JD-NET-001",
+        "JD-CHAIN-CLINIT",
+        "JD-LOAD-001"
+      ],
+      "findingsCount": 4
+    },
+    {
+      "classKey": "suspicious/SuspiciousDebuggerCheck",
+      "expectedVerdict": "SUSPICIOUS",
+      "actualVerdict": "SUSPICIOUS",
+      "riskScore": 49.5,
+      "expectedRules": [
+        "JD-EVA-003"
+      ],
+      "foundRules": [
+        "JD-EVA-003"
+      ],
+      "findingsCount": 4
+    },
+    {
+      "classKey": "suspicious/SuspiciousDecodeExec",
+      "expectedVerdict": "LIKELY_MALICIOUS",
+      "actualVerdict": "LIKELY_MALICIOUS",
+      "riskScore": 82.2,
+      "expectedRules": [
+        "JD-EVA-002",
+        "JD-EXEC-001",
+        "JD-CHAIN-DECODE-EXEC"
+      ],
+      "foundRules": [
+        "JD-EVA-002",
+        "JD-EXEC-001",
+        "JD-CHAIN-DECODE-EXEC"
+      ],
+      "findingsCount": 3
+    },
+    {
+      "classKey": "suspicious/SuspiciousDropper",
+      "expectedVerdict": "LIKELY_MALICIOUS",
+      "actualVerdict": "LIKELY_MALICIOUS",
+      "riskScore": 41.4,
+      "expectedRules": [
+        "JD-NET-001",
+        "JD-EXEC-001",
+        "JD-CHAIN-DROPPER"
+      ],
+      "foundRules": [
+        "JD-EXEC-002",
+        "JD-CHAIN-DROPPER"
+      ],
+      "findingsCount": 2
+    },
+    {
+      "classKey": "suspicious/SuspiciousExfil",
+      "expectedVerdict": "LIKELY_MALICIOUS",
+      "actualVerdict": "LIKELY_MALICIOUS",
+      "riskScore": 45.4,
+      "expectedRules": [
+        "JD-SYS-002",
+        "JD-NET-001",
+        "JD-CHAIN-EXFIL"
+      ],
+      "foundRules": [
+        "JD-NET-001",
+        "JD-CHAIN-EXFIL"
+      ],
+      "findingsCount": 3
+    },
+    {
+      "classKey": "suspicious/SuspiciousNativeLoad",
+      "expectedVerdict": "SUSPICIOUS",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 10.8,
+      "expectedRules": [
+        "JD-SYS-001"
+      ],
+      "foundRules": [
+        "JD-SYS-001"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "suspicious/SuspiciousPromptInjection",
+      "expectedVerdict": "SUSPICIOUS",
+      "actualVerdict": "SUSPICIOUS",
+      "riskScore": 24.8,
+      "expectedRules": [
+        "JD-EVA-005"
+      ],
+      "foundRules": [
+        "JD-EVA-005"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "suspicious/SuspiciousRecon",
+      "expectedVerdict": "SUSPICIOUS",
+      "actualVerdict": "SUSPICIOUS",
+      "riskScore": 28.3,
+      "expectedRules": [
+        "JD-SYS-002"
+      ],
+      "foundRules": [
+        "JD-SYS-002"
+      ],
+      "findingsCount": 2
+    },
+    {
+      "classKey": "suspicious/SuspiciousRevShell",
+      "expectedVerdict": "LIKELY_MALICIOUS",
+      "actualVerdict": "LIKELY_MALICIOUS",
+      "riskScore": 100.0,
+      "expectedRules": [
+        "JD-NET-001",
+        "JD-EXEC-001",
+        "JD-CHAIN-REVSHELL"
+      ],
+      "foundRules": [
+        "JD-NET-001",
+        "JD-CHAIN-DROPPER",
+        "JD-EXEC-003",
+        "JD-EXEC-002",
+        "JD-CHAIN-REVSHELL"
+      ],
+      "findingsCount": 6
+    },
+    {
+      "classKey": "suspicious/SuspiciousShutdownHook",
+      "expectedVerdict": "SUSPICIOUS",
+      "actualVerdict": "SUSPICIOUS",
+      "riskScore": 22.5,
+      "expectedRules": [
+        "JD-SYS-001"
+      ],
+      "foundRules": [
+        "JD-SYS-001"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "suspicious/SuspiciousTimeBomb",
+      "expectedVerdict": "SUSPICIOUS",
+      "actualVerdict": "SUSPICIOUS",
+      "riskScore": 30.8,
+      "expectedRules": [
+        "JD-EVA-004",
+        "JD-EXEC-001",
+        "JD-CHAIN-TIMEBOMB"
+      ],
+      "foundRules": [
+        "JD-EVA-004",
+        "JD-EXEC-002",
+        "JD-CHAIN-TIMEBOMB"
+      ],
+      "findingsCount": 3
+    },
+    {
+      "classKey": "suspicious/SuspiciousXorDecryptor",
+      "expectedVerdict": "SUSPICIOUS",
+      "actualVerdict": "LIKELY_MALICIOUS",
+      "riskScore": 73.3,
+      "expectedRules": [
+        "JD-EXEC-001",
+        "JD-EVA-001"
+      ],
+      "foundRules": [
+        "JD-EXEC-001",
+        "JD-CHAIN-DECODE-EXEC",
+        "JD-EVA-001"
+      ],
+      "findingsCount": 3
+    },
+    {
+      "classKey": "vulnerable/VulnCommandExec",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "LIKELY_MALICIOUS",
+      "riskScore": 59.8,
+      "expectedRules": [
+        "JD-EXEC-001"
+      ],
+      "foundRules": [
+        "JD-EXEC-003",
+        "JD-EXEC-001",
+        "JD-CHAIN-TAINT-SINK"
+      ],
+      "findingsCount": 3
+    },
+    {
+      "classKey": "vulnerable/VulnDeserialization",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 22.5,
+      "expectedRules": [
+        "JD-DESER-001"
+      ],
+      "foundRules": [
+        "JD-DESER-001"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnEcbCipher",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 23.8,
+      "expectedRules": [
+        "JD-CRYP-002"
+      ],
+      "foundRules": [
+        "JD-CRYP-002"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnHardcodedAws",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 39.2,
+      "expectedRules": [
+        "JD-SEC-001"
+      ],
+      "foundRules": [
+        "JD-SEC-001"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnHardcodedPem",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 39.2,
+      "expectedRules": [
+        "JD-SEC-001"
+      ],
+      "foundRules": [
+        "JD-SEC-001"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnInsecureRandom",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 19.4,
+      "expectedRules": [
+        "JD-CRYP-004"
+      ],
+      "foundRules": [
+        "JD-CRYP-004"
+      ],
+      "findingsCount": 3
+    },
+    {
+      "classKey": "vulnerable/VulnJndiLookup",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 38.0,
+      "expectedRules": [
+        "JD-DYN-003"
+      ],
+      "foundRules": [
+        "JD-DYN-003"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnPathTraversal",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "CLEAN",
+      "riskScore": 0.0,
+      "expectedRules": [
+        "JD-INJ-002"
+      ],
+      "foundRules": [],
+      "findingsCount": 0
+    },
+    {
+      "classKey": "vulnerable/VulnPermissiveHost",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 39.2,
+      "expectedRules": [
+        "JD-CRYP-005"
+      ],
+      "foundRules": [
+        "JD-CRYP-005"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnReflection",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "SUSPICIOUS",
+      "riskScore": 21.2,
+      "expectedRules": [
+        "JD-DYN-001"
+      ],
+      "foundRules": [
+        "JD-DYN-002"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnSqlInjection",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 36.0,
+      "expectedRules": [
+        "JD-INJ-001"
+      ],
+      "foundRules": [
+        "JD-INJ-001",
+        "JD-CHAIN-TAINT-SINK"
+      ],
+      "findingsCount": 2
+    },
+    {
+      "classKey": "vulnerable/VulnTrustAllTls",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "SUSPICIOUS",
+      "riskScore": 62.7,
+      "expectedRules": [
+        "JD-CRYP-005"
+      ],
+      "foundRules": [
+        "JD-CRYP-005"
+      ],
+      "findingsCount": 2
+    },
+    {
+      "classKey": "vulnerable/VulnWeakCipher",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 23.8,
+      "expectedRules": [
+        "JD-CRYP-002"
+      ],
+      "foundRules": [
+        "JD-CRYP-002"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnWeakDigest",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 11.4,
+      "expectedRules": [
+        "JD-CRYP-001"
+      ],
+      "foundRules": [
+        "JD-CRYP-001"
+      ],
+      "findingsCount": 1
+    },
+    {
+      "classKey": "vulnerable/VulnXxe",
+      "expectedVerdict": "VULNERABLE",
+      "actualVerdict": "VULNERABLE",
+      "riskScore": 22.0,
+      "expectedRules": [
+        "JD-INJ-003"
+      ],
+      "foundRules": [
+        "JD-INJ-003"
+      ],
+      "findingsCount": 1
+    }
+  ]
+}
