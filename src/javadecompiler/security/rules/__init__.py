@@ -10,6 +10,13 @@ from javadecompiler.security.rules.base import (
     register_rule,
 )
 
+# Milestone 3 static rule families
+import javadecompiler.security.rules.execution
+import javadecompiler.security.rules.network
+import javadecompiler.security.rules.dynamic
+import javadecompiler.security.rules.deserialization
+import javadecompiler.security.rules.crypto
+
 __all__ = [
     "SecurityRule",
     "register_rule",
